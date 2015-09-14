@@ -68,26 +68,27 @@ The example directory contains the following files :
 
 The following command will run the entire pipeline (based on the config file), generating results in the $OUT  directory. You can comment lines in the configuration file by adding "#" at the begining of a line.
 
-Before running the pipeline, check the configuration file to set up the number of threads right.
+
 ```bash
-OUT=TestAuto
+OUT=Test1
 gunzip example/Example_reads_1.fastq.gz
 gunzip example/Example_reads_2.fastq.gz
 parties Run -genome example/scaffold51_1.fa -out_dir $OUT -config example/example.cfg
 ```
 
-You can also run each modules independently.
-The following command examples do not take advantage of the auto-detection.
+Before running the pipeline, check the configuration file ("example/example.cfg") to set the number of threads.
+
+You can also run each step independently, specifying the intermediate result files on the command line.
 
 The map module will align the reads on the reference.
 ```bash
-OUT=TestInde
+OUT=Test2
 parties Map -genome example/scaffold51_1.fa -out_dir $OUT \
  -fastq1 example/Example_reads_1.fastq -fastq2 example/Example_reads_2.fastq \
  -max_insert_size 500 -index_genome -threads 4 
 ```
 
-The MIRAA module search for breakpoint in an alignment file.
+The MIRAA module searches for breakpoints in an alignment file.
 ```bash
 parties MIRAA -genome example/scaffold51_1.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
@@ -140,8 +141,8 @@ parties MIRET -genome example/scaffold51_1.fa -out_dir $OUT \
  -score_method Boundaries -threads 4 
 ```
 
-The MILORD module search for rare deletions in sequencing reads compare to a reference.
-You may run it on the somatic genome, but case we expect no results in that case.
+The MILORD module searches for rare deletions in sequencing reads compared to a reference.
+You may run it on the somatic genome, but we expect no results in that case.
 ```bash
 parties MILORD -genome example/scaffold51_1.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
@@ -149,7 +150,7 @@ parties MILORD -genome example/scaffold51_1.fa -out_dir $OUT \
  -threads 4 
 ```
 
-You may run it on a germline genome where we do expect to see deletions that corresponds to somatic reads.
+You may run it on a germline genome where we do expect to see deletions that correspond to somatic reads.
 ```bash
 parties MILORD -genome $OUT/Insert/Insert.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
