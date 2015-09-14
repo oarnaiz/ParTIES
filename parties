@@ -1,0 +1,292 @@
+#!/usr/bin/perl 
+use strict;
+use FindBin qw($Bin);
+use lib "$Bin/lib/";
+
+my $VERSION = 1.00;
+
+use Getopt::Long;
+use Parallel::ForkManager;
+
+
+use PARTIES::Config;
+
+
+=head1 NAME
+
+ ParTIES main script - PARamecium Toolbox for Interspersed DNA Elimination Studies
+
+=head1 AUTHORS
+
+2015, I2BC - CNRS , GNU GPL3
+
+=cut
+
+# COMMON PARAMTERS
+my ($SEQ_ID,$CONFIG,$AUTO,$GENOME,$OUT_DIR,$BAM,$PREFIX,$VERBOSE,$KEEP_TMP,$QUIET,$FORCE,$CHECK_CONFIG,$HELP);
+my $THREADS=6;
+
+# MIRAA PARAMETERS
+my ($MAX_INSERT_SIZE,$MIN_BREAK_COVERAGE,$MAX_MISMATCH,$MIN_MATCH_LENGTH,$MIN_DIST_FROM_EXTREMITIES,$MIN_DIST_BETWEEN_BP);
+
+# MICA PARAMETERS
+my ($CONTROL_BAM,$MIRAA,$NOT_BOUNDED_BY_TA,$JUNCTION_FLANK_SEQ_LENGTH,$REPEAT_MASKER_PARAMETERS,@ASSEMBLIES,@BLATs);
+
+# Insert PARAMETERS
+my ($IES_FILE,$SUFFIX,$LOW_CASE);
+
+# Assembly PARAMETERS
+my ($SKIP_VELVET_ASSEMBLY,$NO_ZIP,@KMER);
+
+# MICA PARAMETERS
+my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH);
+
+# MIRET PARAMETERS
+my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE);
+
+# MILORD PARAMETERS
+my ($MIN_SIZE, $MAX_SIZE, $REPORT_READ_NAMES);
+
+# Compare PARAMETERS
+my ($REFERENCE_SET_FILE, $CURRENT_SET_FILE,$MAX_DIST,$TAB);
+
+
+# Map PARAMETERS
+my ($INDEX_GENOME,$USE_INSERT_REFERENCE);
+
+
+
+#############################################
+# GET PARAMETERS
+#############################################
+
+my %MODES = PARTIES::Config->get_parties_modes();
+
+
+my $MODE = shift;
+#Reads options from command line
+GetOptions(  
+	    '-seq_id=s' => \$SEQ_ID,
+	    '-config=s' => \$CONFIG,
+	    '-auto' => \$AUTO,
+	    '-check_config' => \$CHECK_CONFIG,
+	    
+	# common options
+	    '-help' => \$HELP,
+	    '-verbose' => \$VERBOSE,	
+	    '-quiet' => \$QUIET,
+	    '-threads=s' => \$THREADS, 
+	    '-keep_tmp' => \$KEEP_TMP,
+	    '-force' => \$FORCE,	 
+	    	 
+	    '-genome=s' => \$GENOME,
+	    '-out_dir=s' => \$OUT_DIR,
+	    '-bam=s' => \$BAM,
+	    '-prefix=s' => \$PREFIX,
+	    '-max_coverage=s' => \$MAX_COVERAGE,
+	     	    
+	
+	# Map options    
+	    '-index_genome' => \$INDEX_GENOME,
+	    '-use_insert_reference' => \$USE_INSERT_REFERENCE,
+	
+	
+	# MIRAA options    
+	    '-max_insert_size=i' => \$MAX_INSERT_SIZE,
+	    '-min_match_length=i' => \$MIN_MATCH_LENGTH,
+            '-max_mismatch=i' => \$MAX_MISMATCH,
+	    '-min_dist_between_bp=i' => \$MIN_DIST_BETWEEN_BP,
+            '-min_dist_from_extremities=i' => \$MIN_DIST_FROM_EXTREMITIES,
+            '-min_break_coverage=i' => \$MIN_BREAK_COVERAGE,
+	
+	# MICA options    
+	    '-germline_genome=s' => \@ASSEMBLIES,
+	    '-germline_blat=s' => \@BLATs,
+	    '-control_bam=s' => \$CONTROL_BAM,
+	    '-miraa=s' => \$MIRAA,
+	    '-junction_flank_seq_length=i' => \$JUNCTION_FLANK_SEQ_LENGTH,
+	    '-not_bounded_by_ta' => \$NOT_BOUNDED_BY_TA,
+	    '-repeat_masker_parameters=s' => \$REPEAT_MASKER_PARAMETERS,
+
+	# Insert options    
+	    '-ies=s' => \$IES_FILE,
+	    '-suffix=s' => \$SUFFIX,
+	    '-low_case' => \$LOW_CASE,	
+	    
+	# Assembly options    
+	    '-fastq1=s' => \$FASTQ1,
+	    '-fastq2=s' => \$FASTQ2,
+	    '-kmer=i' => \@KMER,
+	    '-insert_size=i' => \$INSERT_SIZE,
+	    '-min_coverage=s' => \$MIN_COVERAGE,
+	    '-min_contig_length=i' => \$MIN_CONTIG_LENGTH,	
+	    '-skip_velvet_assembly' => \$SKIP_VELVET_ASSEMBLY,
+	    '-no_zip' => \$NO_ZIP,		
+
+	# MIRET options
+	    '-germline_ies=s' => \$GERMLINE_IES_FILE,
+	    '-chr_cor=s' => \$CHR_COR,
+	    '-germline_bam=s' => \$GERMLINE_BAM,
+	    '-score_method=s' => \$SCORE_METHOD,
+	    '-control=s' => \$CONTROL,
+
+	# MILORD options
+	    '-min_size=s' => \$MIN_SIZE,
+	    '-max_size=s' => \$MAX_SIZE,
+	    '-report_read_names' => \$REPORT_READ_NAMES,
+	
+	# Compare options    
+	    '-reference_set=s' => \$REFERENCE_SET_FILE,
+	    '-current_set=s' => \$CURRENT_SET_FILE,
+	    '-max_dist=i' => \$MAX_DIST,
+	    '-tab' => \$TAB,	        
+	   );
+
+
+
+die usage() if(!$MODE or !$MODES{$MODE});
+
+#############################################
+# MAIN
+#############################################
+
+
+my $PACKAGE = 'PARTIES::'.$MODE;
+my $factory = $PACKAGE->new({	    
+				# common options
+	    			-config => $CONFIG,
+	    			-auto => $AUTO ? 'TRUE' : 'FALSE',
+				-genome => $GENOME,
+				-out_dir => $OUT_DIR,
+				-bam => $BAM,
+				-keep_tmp => $KEEP_TMP ? 'TRUE' : 'FALSE',	
+				-force => $FORCE ? 'TRUE' : 'FALSE',
+				-seq_id => $SEQ_ID,
+				-threads => $THREADS,	
+				-verbose=>$VERBOSE ? 'TRUE' : 'FALSE',	
+				-quiet=>$QUIET ? 'TRUE' : 'FALSE',
+	    			-prefix => $PREFIX,
+	    			-suffix => $SUFFIX,
+	    			-check_config => $CHECK_CONFIG ? 'TRUE' : 'FALSE',
+				
+				# Map options
+	    			-index_genome => $INDEX_GENOME ? 'TRUE' : 'FALSE',
+	    			-use_insert_reference => $USE_INSERT_REFERENCE ? 'TRUE' : 'FALSE',
+				
+				-min_match_length => $MIN_MATCH_LENGTH,
+				-max_mismatch => $MAX_MISMATCH,
+				
+				# MIRAA options   
+				-max_insert_size => $MAX_INSERT_SIZE,
+			        -min_dist_between_bp => $MIN_DIST_BETWEEN_BP,
+				-min_dist_from_extremities => $MIN_DIST_FROM_EXTREMITIES,
+				-min_break_coverage => $MIN_BREAK_COVERAGE,			    
+    		    		
+				# MICA options    
+	    			-germline_genome => \@ASSEMBLIES,
+	    			-germline_blat => \@BLATs,
+				-control_bam => $CONTROL_BAM,
+				-miraa => $MIRAA,
+				-junction_flank_seq_length => $JUNCTION_FLANK_SEQ_LENGTH,
+				-not_bounded_by_ta => $NOT_BOUNDED_BY_TA ? 'TRUE' : 'FALSE',
+	                        -repeat_masker_parameters  => $REPEAT_MASKER_PARAMETERS,
+	
+				# Insert options    
+	    			-ies => $IES_FILE,
+				-low_case => $LOW_CASE ? 'TRUE' : 'FALSE',
+				
+				# Assembly options 
+	    			-fastq1 => $FASTQ1,
+	    			-fastq2 => $FASTQ2,
+	    			-kmer => \@KMER,
+	    			-insert_size => $INSERT_SIZE,
+	    			-max_coverage => $MAX_COVERAGE,
+	    			-min_coverage => $MIN_COVERAGE,
+	    			-min_contig_length => $MIN_CONTIG_LENGTH,
+				-skip_velvet_assembly => $SKIP_VELVET_ASSEMBLY ? 'TRUE' : 'FALSE',
+	    			-no_zip => $NO_ZIP ? 'TRUE' : 'FALSE',	
+
+				# MIRET options
+			        -germline_ies => $GERMLINE_IES_FILE,
+			        -chr_cor => $CHR_COR,
+			        -germline_bam => $GERMLINE_BAM,
+			        -score_method => $SCORE_METHOD,
+			        -control => $CONTROL,
+
+				# MILORD options
+				-min_size => $MIN_SIZE,
+				-max_size => $MAX_SIZE,
+				-report_read_names => $REPORT_READ_NAMES,
+				
+				# Compare options
+				-reference_set => $REFERENCE_SET_FILE,
+				-current_set => $CURRENT_SET_FILE,
+				-max_dist => $MAX_DIST,
+				-tab => $TAB ? 'TRUE' : 'FALSE',	
+				});
+
+# Check we have all parameters
+$factory->_usage if($HELP or !$factory->_check_mandatory_parameters);
+
+if($CHECK_CONFIG and $MODE ne 'Run') {
+   print STDERR "# Config $MODE ... OK\n";
+   print STDERR "# ",$factory->_command_line,"\n" if($VERBOSE);
+   exit 1;
+}
+
+# prepare directory
+$factory->init;
+
+exit 1 if($MODE eq 'Run');
+
+
+
+
+my %RESULTS;
+my $pm = new Parallel::ForkManager($THREADS);
+$pm -> run_on_finish (
+  sub {
+    my ($pid, $exit_code, $ident, $exit_signal, $core_dump, $results) = @_;
+    foreach my $type (keys %{$results}) {
+       foreach my $key (keys %{$results->{$type}}) {
+          $RESULTS{$type}->{$key}=$results->{$type}->{$key};
+       }
+    }
+  }
+);
+
+
+
+
+my $seqio = new Bio::SeqIO(-file=> $factory->{GENOME},-format=>'Fasta');
+
+while(my $seq = $seqio->next_seq) {
+   my $seq_id = $seq->id;
+   next if($SEQ_ID and $seq_id ne $SEQ_ID );
+   # Forks and returns the pid for the child:
+   
+   my $pid = $pm->start and next; 
+   my %results = $factory->calculate($seq);
+   
+   # Terminates the child process
+   $pm->finish(0,\%results);
+
+}
+
+$pm->wait_all_children;  
+
+$factory->finish(\%RESULTS);
+exit 1;
+
+
+#############################################
+# FUNCTIONS
+#############################################
+
+sub usage {
+   print STDERR "$0 [MODE] : PARamecium Toolbox for Interspersed DNA Elimination Studies\n";   
+   foreach my $mode (sort {$MODES{$a}->{N} <=> $MODES{$b}->{N}} keys %MODES) {
+      print STDERR " $mode : $MODES{$mode}->{DESC}\n";
+   }
+   exit 0;
+}
