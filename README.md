@@ -58,6 +58,7 @@ If you use this software please cite the following publication
 # Example
 The example directory contains the following files :
 | File | Description |
+| ----------- | ----------- |
 | scaffold51_1.fa | The somatic reference for this example [a single somatic scaffold of the Paramecium tetraurelia genome] |
 | Example_reads_1.fastq.gz | Read file 1 (paired with read file 2), 100 nt-long reads |
 | Example_reads_2.fastq.gz | Read file 2 (paired with read file 1), 100 nt-long reads |
