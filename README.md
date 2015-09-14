@@ -127,7 +127,7 @@ We use the Map module once again to align the reads on the IES containing refere
 ```bash
 parties Map -genome $OUT/Insert/Insert.fa -out_dir $OUT \
  -fastq1 example/Example_reads_1.fastq -fastq2 example/Example_reads_2.fastq \
- -max_insert_size 500 -index_genome -threads 4 
+ -max_insert_size 500 -index_genome -threads 4 -force
 ```
 
 The MIRET module calculates precisely the level of retention of each IES in a sample.
@@ -142,15 +142,8 @@ parties MIRET -genome example/scaffold51_1.fa -out_dir $OUT \
 ```
 
 The MILORD module searches for rare deletions in sequencing reads compared to a reference.
-You may run it on the somatic genome, but we expect no results in that case.
-```bash
-parties MILORD -genome example/scaffold51_1.fa -out_dir $OUT \
- -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
- -ies $OUT/MICA/MICA.gff3 \
- -threads 4 
-```
 
-You may run it on a germline genome where we do expect to see deletions that correspond to somatic reads.
+When run on a germline genome, we do expect to see deletions that correspond to somatic reads.
 ```bash
 parties MILORD -genome $OUT/Insert/Insert.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
