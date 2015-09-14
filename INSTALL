@@ -11,14 +11,14 @@ ParTIES INSTALLATION
 2. SOFTWARE REQUIREMENTS
 ########################
 
-  - velvet (1.2.10)
-  - bowtie2 (2.0.2)
-  - samtools (0.1.18)
-  - RepeatMasker (4-0-5) 
-  - blat (v34)
-  - musle (3.8.31)
+  - velvet (1.2.10 or later)
+  - bowtie2 (2.0.2 or later)
+  - samtools (0.1.18 or later)
+  - RepeatMasker (4-0-5 or later) 
+  - blat (v34 or later)
+  - muscle (3.8.31 or later)
 
-  An example of install procedure is at the end of this document.
+  An example install procedure is found at the end of this document.
 
 
 3. INSTALLATION
@@ -32,7 +32,7 @@ ParTIES INSTALLATION
   
             perl ./check
 
-     The check script will check for you all the pre-requisites softwares. (See section 4)
+     The check script will check for you all the pre-requisite software. (See section 4)
 
   - Test ParTIES
   
@@ -53,8 +53,8 @@ ParTIES INSTALLATION
   - Add to your path
 
     Add the following to your $HOME/.bashrc file
-    export PATH=$PATH:[YOUR DIRECTORY]
-    You will have to log out and log back in for this to be incorporated.
+    export PATH=$PATH:[/path/to/ParTIES]
+    source $HOME/.bashrc
 
 
 
@@ -115,10 +115,9 @@ ParTIES INSTALLATION
    tar -xzvf ncbi-blast-2.2.31+-x64-linux.tar.gz
    cd ncbi-blast-2.2.31+/bin
    ln -s ../../../rmblast/ncbi-rmblastn-2.2.28/bin/rmblast
-
-
-   https://tandem.bu.edu/trf/trf407b.linux64.download.html
+   
    mkdir trf && cd trf
+   #go to the URL : https://tandem.bu.edu/trf/trf407b.linux64.download.html
    wget http:/...../trf407b.linux64
    ln -s trf407b.linux64 trf
 
