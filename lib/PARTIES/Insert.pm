@@ -232,6 +232,7 @@ sub calculate {
    close FA;
    close LOG;
    close ERR;
+   system("perl -pi -e 's/^\n\$//' $fasta_file");
    
    $self->stderr("End calculation $seq_id\n" );
 
