@@ -39,7 +39,7 @@ my ($IES_FILE,$SUFFIX,$LOW_CASE);
 my ($SKIP_VELVET_ASSEMBLY,$NO_ZIP,@KMER);
 
 # MICA PARAMETERS
-my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH);
+my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH,$SKIP_REPEAT_MASKER);
 
 # MIRET PARAMETERS
 my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE);
@@ -107,6 +107,7 @@ GetOptions(
 	    '-junction_flank_seq_length=i' => \$JUNCTION_FLANK_SEQ_LENGTH,
 	    '-not_bounded_by_ta' => \$NOT_BOUNDED_BY_TA,
 	    '-repeat_masker_parameters=s' => \$REPEAT_MASKER_PARAMETERS,
+	    '-skip_repeat_masker' => \$SKIP_REPEAT_MASKER,
 
 	# Insert options    
 	    '-ies=s' => \$IES_FILE,
@@ -190,6 +191,7 @@ my $factory = $PACKAGE->new({
 				-junction_flank_seq_length => $JUNCTION_FLANK_SEQ_LENGTH,
 				-not_bounded_by_ta => $NOT_BOUNDED_BY_TA ? 'TRUE' : 'FALSE',
 	                        -repeat_masker_parameters  => $REPEAT_MASKER_PARAMETERS,
+				-skip_repeat_masker => $SKIP_REPEAT_MASKER ? 'TRUE' : 'FALSE',
 	
 				# Insert options    
 	    			-ies => $IES_FILE,

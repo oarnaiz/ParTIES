@@ -27,9 +27,9 @@ ParTIES INSTALLATION
 
   - Download the files to the directory you wish to install them in.
             git clone https://github.com/oarnaiz/ParTIES
+            cd ParTIES
   
   - Check the distribution by invoking Perl on the "check" script, i.e.:
-  
             perl ./check
 
      The check script will check for you all the pre-requisite software. (See section 4)
@@ -58,14 +58,14 @@ ParTIES INSTALLATION
 
 
 
-4. EXAMPLE OF PROCEDURE FOR THE REQUIEREMENTS
+4. EXAMPLE OF PROCEDURE FOR THE REQUIREMENTS
 #############################################
 
    
    # You need to install zlib-devel (or whatever the equivalent on your server distribution is). 
-   yum install perl-File-Which zlib-devel
+   sudo yum install perl-File-Which zlib-devel
    # or
-   apt-get install libfile-which-perl zlib1g-dev
+   sudo apt-get install libfile-which-perl zlib1g-dev
 
 
 
@@ -73,6 +73,7 @@ ParTIES INSTALLATION
    #####################################
    mkdir velvet && cd velvet
    wget https://www.ebi.ac.uk/~zerbino/velvet/velvet_1.2.10.tgz
+   tar -xzvf velvet_1.2.10.tgz
    cd velvet_1.2.10
    make 'MAXKMERLENGTH=200' 'LONGSEQUENCES=1' 'OPENMP=1'
    #make install
@@ -80,7 +81,7 @@ ParTIES INSTALLATION
 
    # BOWTIE2
    #####################################
-   apt-get install bowtie2
+   sudo apt-get install bowtie2
    # or
    mkdir bowtie2 && cd bowtie2
    wget http://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.0.2/bowtie2-2.0.2-linux-x86_64.zip/download -O bowtie2-2.0.2-linux-x86_64.zip
@@ -89,9 +90,9 @@ ParTIES INSTALLATION
 
    # SAMTools
    ##########################
-   apt-get install libncurses5-dev
+   sudo apt-get install libncurses5-dev
    # or
-   yum install ncurses ncurses-devel
+   sudo yum install ncurses ncurses-devel
 
    mkdir samtools && cd samtools
    wget http://sourceforge.net/projects/samtools/files/samtools/0.1.18/samtools-0.1.18.tar.bz2/download -O samtools-0.1.18.tar.bz2
@@ -102,9 +103,10 @@ ParTIES INSTALLATION
    #make install
 
 
-   # RepeatMasker
+   # RepeatMasker 
    ##########################
-
+   # You can skip this step if you do not want to use RepeatMasker (please use -skip_repeat_masker option)
+   
    mkdir rmblast && cd rmblast
    wget ftp://ftp.ncbi.nlm.nih.gov/blast/executables/rmblast/LATEST/ncbi-rmblastn-2.2.28-x64-linux.tar.gz
    tar -xzvf ncbi-rmblastn-2.2.28-x64-linux.tar.gz 
@@ -114,18 +116,20 @@ ParTIES INSTALLATION
    wget ftp://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/ncbi-blast-2.2.31+-x64-linux.tar.gz
    tar -xzvf ncbi-blast-2.2.31+-x64-linux.tar.gz
    cd ncbi-blast-2.2.31+/bin
-   ln -s ../../../rmblast/ncbi-rmblastn-2.2.28/bin/rmblast
+   ln -s ../../../rmblast/ncbi-rmblastn-2.2.28/bin/rmblastn
    
    mkdir trf && cd trf
    #go to the URL : https://tandem.bu.edu/trf/trf407b.linux64.download.html
    wget http:/...../trf407b.linux64
    ln -s trf407b.linux64 trf
-
+   
    mkdir RepeatMasker && cd RepeatMasker
    wget http://www.repeatmasker.org/RepeatMasker-open-4-0-5.tar.gz
    tar -xzvf RepeatMasker-open-4-0-5.tar.gz 
    cd RepeatMasker/
-   ./confgure
+   ./configure
+   # Update your Repbase libraries on http://www.girinst.org/. (Need an account registration)
+   
 
    # UCSC BLAT
    ##########################
@@ -145,6 +149,9 @@ ParTIES INSTALLATION
    ##########################
    # PERL MODULES
    ##########################
+   su -
+   cpan
+   
    cpan> 
 
    cpan> install Statistics::R

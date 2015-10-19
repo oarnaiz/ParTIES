@@ -56,6 +56,10 @@ my %PARAMETERS = (
 			REPEAT_MASKER_PARAMETERS => {
 				MANDATORY=>1, DEFAULT=>'-nolow  -x -species "paramecium tetraurelia"', TYPE=>'VALUE', RANK => 3,
 				DESCRIPTION=>"RepeatMasker parameters"
+				},
+			SKIP_REPEAT_MASKER => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
+				DESCRIPTION=>"Skip RepeatMasker step"
 				},	
 				
 		);
@@ -196,15 +200,20 @@ sub init {
      next if(-e "$assembly.masked");
      $self->stderr( $base_name_assembly);
      #$self->stderr("Masking ".$base_name_assembly." ... " );
-     system("$RepeatMasker -pa $self->{THREADS} -dir $mask_dir/ $repeat_masker_parameters $assembly > /dev/null");
-     
-     # if no repetitive sequences
-     if(!-e "$mask_dir/$base_name_assembly.masked") {
-        my $rm_out = `head -1 $mask_dir/$base_name_assembly.out`;
-	system("cp $assembly $mask_dir/$base_name_assembly.masked") if($rm_out=~/^There were no repetitive sequences detected in /);
+     if($self->{SKIP_REPEAT_MASKER} eq 'TRUE') {
+        system("ln -s $base_name_assembly $assembly.masked");
+     } else {
+        system("$RepeatMasker -pa $self->{THREADS} -dir $mask_dir/ $repeat_masker_parameters $assembly > /dev/null");
+        # if no repetitive sequences
+        if(!-e "$mask_dir/$base_name_assembly.masked") {
+           my $rm_out = `head -1 $mask_dir/$base_name_assembly.out`;
+	   system("ln -s $base_name_assembly $assembly.masked") if($rm_out=~/^There were no repetitive sequences detected in /);
+        } else {
+           die "No file $mask_dir/$base_name_assembly.masked" if(!-e "$mask_dir/$base_name_assembly.masked");
+           system("mv $mask_dir/$base_name_assembly.masked $assembly.masked");  
+	}
      }
-     die "No file $mask_dir/$base_name_assembly.masked" if(!-e "$mask_dir/$base_name_assembly.masked");
-     system("mv $mask_dir/$base_name_assembly.masked $assembly.masked");  
+     
      #$self->stderr("Done\n" );
   }
   $self->stderr("Done\n" );
