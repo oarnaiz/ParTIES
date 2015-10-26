@@ -39,7 +39,7 @@ my ($IES_FILE,$SUFFIX,$LOW_CASE);
 my ($SKIP_VELVET_ASSEMBLY,$NO_ZIP,@KMER);
 
 # MICA PARAMETERS
-my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH,$SKIP_REPEAT_MASKER);
+my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH,$SKIP_REPEAT_MASKER,$SEQUENCES_PER_BLAT_BATCH);
 
 # MIRET PARAMETERS
 my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE);
@@ -108,6 +108,7 @@ GetOptions(
 	    '-not_bounded_by_ta' => \$NOT_BOUNDED_BY_TA,
 	    '-repeat_masker_parameters=s' => \$REPEAT_MASKER_PARAMETERS,
 	    '-skip_repeat_masker' => \$SKIP_REPEAT_MASKER,
+	    '-sequences_per_blat_batch' => \$SEQUENCES_PER_BLAT_BATCH,
 
 	# Insert options    
 	    '-ies=s' => \$IES_FILE,
@@ -192,6 +193,7 @@ my $factory = $PACKAGE->new({
 				-not_bounded_by_ta => $NOT_BOUNDED_BY_TA ? 'TRUE' : 'FALSE',
 	                        -repeat_masker_parameters  => $REPEAT_MASKER_PARAMETERS,
 				-skip_repeat_masker => $SKIP_REPEAT_MASKER ? 'TRUE' : 'FALSE',
+				-sequences_per_blat_batch => $SEQUENCES_PER_BLAT_BATCH,
 	
 				# Insert options    
 	    			-ies => $IES_FILE,

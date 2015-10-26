@@ -3,7 +3,7 @@ use strict;
 use base 'PARTIES::Root';
 use PARTIES::Config;
 use File::Basename;
-use List::Util qw(max min);
+use List::Util qw(max min shuffle);
 
 =head1 NAME
 
@@ -41,6 +41,10 @@ my %PARAMETERS = (
 				MANDATORY=>0, DEFAULT=>'500', TYPE=>'VALUE', RANK => 1,
 				DESCRIPTION=>"Estimation of the sequencing insert size"
 				},
+			SEQUENCES_PER_BLAT_BATCH => {
+				MANDATORY=>0, DEFAULT=>50, TYPE=>'VALUE', RANK => 2,
+				DESCRIPTION=>"Number of sequences per blat batch"
+				},				
 			PREFIX => {
 				MANDATORY=>0, DEFAULT=>'MICA', TYPE=>'VALUE', RANK => 3,
 				DESCRIPTION=>"Prefix of the ID of detected deletions"
@@ -60,8 +64,7 @@ my %PARAMETERS = (
 			SKIP_REPEAT_MASKER => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
 				DESCRIPTION=>"Skip RepeatMasker step"
-				},	
-				
+				},
 		);
 
 
@@ -220,17 +223,17 @@ sub init {
    
   # multi thread blat calculation
   $self->stderr("Align assemblies on the reference\n" );
-  my $pm = new Parallel::ForkManager($self->{THREADS});
+  #my $pm = new Parallel::ForkManager($self->{THREADS});
   my @blat_files = @{$self->{GERMLINE_BLAT}} if($self->{GERMLINE_BLAT});
   for(my $aln_number=0;$aln_number<@{$self->{GERMLINE_GENOME}};$aln_number++) {
      my $assembly = $self->{GERMLINE_GENOME}->[$aln_number].".masked";
      my $blat_file = $blat_files[$aln_number];
      next if(defined $blat_file and $blat_file ne '' and -e $blat_file);
-     my $pid = $pm->start and next; 
+     #my $pid = $pm->start and next; 
      $self->_calculate_blat_file($assembly,$blat_file);
-     $pm->finish(0);
+     #$pm->finish(0);
   }
-  $pm->wait_all_children; 
+  #$pm->wait_all_children; 
   
   
   @blat_files = @{$self->{GERMLINE_BLAT}} if($self->{GERMLINE_BLAT});
@@ -307,7 +310,52 @@ sub _calculate_blat_file {
      	$self->stderr(" already calculated ... ");
      } else {
      	my $insert_size = $self->{INSERT_SIZE};
-  	system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." ".$assembly." -t=dna -q=dna -fastMap -minScore=$insert_size $blat_file");
+	
+        my $qio = new Bio::SeqIO(-file =>$assembly ,-format => 'Fasta');
+	my @qseqs;
+        while (my $q = $qio->next_seq) {
+           push @qseqs , $q;
+        }
+	
+	# write fasta
+	my $number_of_sequence_by_batch = $self->{SEQUENCES_PER_BLAT_BATCH};
+	my @qseq_ids = shuffle(@qseqs);
+	
+	my $out;
+        my $n=0;
+        my @base_files;
+	foreach my $q (@qseq_ids) {
+	
+           if($n == 0 or $n >= $number_of_sequence_by_batch) {
+               my $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+	       $out->close if($out);
+               $out = new Bio::SeqIO(-file =>">$base_filename.fa" ,-format => 'Fasta');
+               push @base_files,$base_filename;
+               $n=0;
+           }
+           $out->write_seq($q);
+           $n++;
+        }
+        $out->close if($out);
+	
+	# execute blat
+	my $pm = new Parallel::ForkManager($self->{THREADS});
+        foreach my $file (@base_files) {
+           my $pid = $pm->start and next; 
+	   system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." $file.fa -noHead -t=dna -q=dna  -minScore=$insert_size $file.blat > /dev/null");   
+           # Terminates the child process
+           $pm->finish(0);
+        }
+        $pm->wait_all_children; 
+
+	# compile all results
+	system("cat ".join(".blat ",@base_files,'')." > $blat_file");
+        system("rm ".join(".blat ",@base_files,'')." ".join(".fa ",@base_files,''));
+
+	
+        #system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." ".$assembly." -t=dna -q=dna -noHead -minScore=$insert_size $blat_file");
+	
+	
      }
      $self->stderr("Done\n" );
   
