@@ -76,6 +76,7 @@ ParTIES INSTALLATION
    tar -xzvf velvet_1.2.10.tgz
    cd velvet_1.2.10
    make 'MAXKMERLENGTH=200' 'LONGSEQUENCES=1' 'OPENMP=1'
+   # WARNING : When Velvet is installed with 'OPENMP=1' it may generate slightly different assemblies from the same input.
    #make install
 
 
