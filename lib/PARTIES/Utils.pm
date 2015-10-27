@@ -6,7 +6,7 @@ use Bio::GFF3::LowLevel qw/ gff3_parse_feature /;
 use Statistics::R;
 use File::Basename;
 use Bio::SeqIO;
-  
+use List::MoreUtils qw(uniq); 
 
 
 #############################################
@@ -91,7 +91,7 @@ sub gff_line {
    my @attributes = ("ID=$id");
    foreach my $key (sort keys %{$feat->{attributes}}) {
       next if($key eq 'ID');
-      foreach my $value (@{$feat->{attributes}->{$key}}) {
+      foreach my $value (uniq @{$feat->{attributes}->{$key}}) {
          push @attributes,"$key=$value";
       }
    }
