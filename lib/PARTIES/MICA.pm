@@ -316,6 +316,7 @@ sub _calculate_blat_file {
         while (my $q = $qio->next_seq) {
            push @qseqs , $q;
         }
+	$qio->close;
 	
 	# write fasta
 	my $number_of_sequence_by_batch = $self->{SEQUENCES_PER_BLAT_BATCH};
@@ -327,8 +328,11 @@ sub _calculate_blat_file {
 	foreach my $q (@qseq_ids) {
 	
            if($n == 0 or $n >= $number_of_sequence_by_batch) {
-               my $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
-	       $out->close if($out);
+               $out->close if($out);
+	       my $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+	       while(-e "$base_filename.fa") {
+	          $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+	       }
                $out = new Bio::SeqIO(-file =>">$base_filename.fa" ,-format => 'Fasta');
                push @base_files,$base_filename;
                $n=0;
@@ -342,7 +346,8 @@ sub _calculate_blat_file {
 	my $pm = new Parallel::ForkManager($self->{THREADS});
         foreach my $file (@base_files) {
            my $pid = $pm->start and next; 
-	   system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." $file.fa -noHead -t=dna -q=dna  -minScore=$insert_size $file.blat > /dev/null");   
+	   system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." $file.fa -noHead -t=dna -q=dna  -minScore=$insert_size $file.blat > /dev/null");  
+	   unlink  "$file.fa";
            # Terminates the child process
            $pm->finish(0);
         }
@@ -350,7 +355,7 @@ sub _calculate_blat_file {
 
 	# compile all results
 	system("cat ".join(".blat ",@base_files,'')." > $blat_file");
-        system("rm ".join(".blat ",@base_files,'')." ".join(".fa ",@base_files,''));
+        system("rm ".$self->{PATH}."/tmp/*.blat");
 
 	
         #system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." ".$assembly." -t=dna -q=dna -noHead -minScore=$insert_size $blat_file");
@@ -572,6 +577,11 @@ sub _find_ies_in_segment {
 
    my $tmp_fname = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
    #$tmp_fname=$self->{PATH}."/tmp/N3ufHJWuE";
+   
+   while(-e "$tmp_fname.fa") {
+      $tmp_fname = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+   }
+   
    my $tname = $seq->id;
    
 
