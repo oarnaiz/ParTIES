@@ -3,7 +3,7 @@ use strict;
 use base 'PARTIES::Root';
 
 use PARTIES::Config;
-
+use Data::Dumper;
 use File::Basename;
 use FindBin qw($Bin);
 
@@ -54,6 +54,14 @@ my %PARAMETERS = (
 			CONTROL => {
 				MANDATORY=>0, DEFAULT=>"", TYPE=>'VALUE', RANK => 2,
 				DESCRIPTION=>"IES retention in a control sample. It will be used, if provided to test the upper retention in the current sample compare to the control sample (GFF3 MIRET output)"
+				},
+			TOPHAT => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
+				DESCRIPTION=>"RNAseq mapped with tophat"
+				},			
+			TAB => {
+				MANDATORY=>0, DEFAULT=>'TRUE', TYPE=>'BOOLEAN', RANK => 2,
+				DESCRIPTION=>"Write results in tabulated format"
 				},
 
 		);
@@ -222,7 +230,6 @@ sub calculate {
 
    	my $sam = new Bio::DB::Sam( -bam => $self->{BAM}, -fasta => $self->{GENOME}, -expand_flags => 'true');
 		my $sam_ies = new Bio::DB::Sam( -bam => $self->{GERMLINE_BAM}, -fasta => $self->{GERMLINE_GENOME}[0], , -expand_flags=> 'true' );
-
 		my %read_cat;
 		my $shift=0;
 		my $min_dist=4;
@@ -252,7 +259,6 @@ sub calculate {
 																{"RIGHT"=>0},
 																\%{$read_cat{$position}});
 
-
 	# Getting Left Boundaries IES+ counts
 			my ($L_ret, $L_mapping_issues, $L_total, $L_read_names);
 			($L_ret, $L_mapping_issues, $L_total, $L_read_names,
@@ -264,7 +270,6 @@ sub calculate {
 																$mac_read_names,
 																{"RIGHT"=>1},
 																\%{$read_cat{$position}});
-
 
 	# Getting Right Boundaries IES+ counts
 			my ($R_ret, $R_mapping_issues, $R_total, $R_read_names);
@@ -281,7 +286,7 @@ sub calculate {
 			my $ies_ret=$L_ret+$R_ret;
 			my $L_bound_ret=$L_ret;
 			my $R_bound_ret=$R_mapping_issues;
-			
+
 			if($self->{SCORE_METHOD} eq "Boundaries"){
 				my ($L_score,$R_score)=(0,0);
 				$L_score=sprintf('%.4f',($L_bound_ret/($L_bound_ret+$mac))) if($L_bound_ret+$mac != 0);
@@ -339,18 +344,15 @@ sub finish {
 	   my $control_miret = PARTIES::Utils->read_gff_file_by_id($self->{CONTROL});
         
 	   my $method = $self->{SCORE_METHOD};
-	   my $tab_file = $self->{PATH}.'/'.uc($self->get_mode).".tab";
-	   
+	   my $tmp_file = $self->{PATH}."/tmp/".uc($self->get_mode).".tab";
 	   
 	   %significant = PARTIES::Utils->significant_retention_score($results,$control_miret,{ METHOD => $method,
-	   											TAB_FILE => $tab_file,
+	   											TMP_FILE => $tmp_file,
 												BIN_DIR => $self->{BIN},
 												}
 												);
 	   
-	   
-#	   
-	   
+	  	   
 	
 	}
  	
@@ -376,6 +378,24 @@ sub finish {
 	   }
 	}
 	close GFF;
+	
+       if($self->{TAB} eq 'TRUE') {
+          $self->stderr("Write tab file ...\n" );
+          my $gff2tab=$self->{BIN}.'/utils/gff2tab.pl';
+   
+          foreach my $key (keys %FILE_EXTENSIONS) {
+             my $fext = ($FILE_EXTENSIONS{$key}->{EXT}) ? $FILE_EXTENSIONS{$key}->{EXT} : $key;
+             next if($fext!~/\.gff3$/);
+             my $gff_file = $self->{PATH}."/".$self->get_mode.'.'.$fext;
+             my $tab_file = $gff_file ;
+             $tab_file=~s/\.gff3$/\.tab/;
+             system("$gff2tab -gff $gff_file > $tab_file");
+          }
+       } 	
+	
+	
+	
+	
 	$self->remove_temporary_files;
 
 }
@@ -430,22 +450,38 @@ sub _get_counts {
 	$step="MAC" if(defined($mac_reads->{"MAC"}));
 	$step="LEFT" if(!defined($mac_reads->{"MAC"}) && defined($left_reads->{"RIGHT"}) );
 	$step="RIGHT" if(!defined($mac_reads->{"MAC"}) && !defined($left_reads->{"RIGHT"}) );
-
+        
+	my $TOPHAT_MAPPING = ($self->{TOPHAT} eq 'TRUE') ? 1 : 0;
 	foreach my $aln ($$segment->features() ){
-		$total++; my $rname=$aln->name;
+		$total++;
+		my ($rname, $rcigar, $rstart, $rend)=($aln->name, $aln->cigar_str, $aln->start, $aln->end);
 		
 		if(!defined($read_cat{$rname})){$read_cat{$rname}={ "MAC" => 'ns', "LEFT" => 'ns', "RIGHT" => 'ns'};}
 
 # Filtering if the current read has been flag as Mac read
-		if(defined($mac_reads->{$aln->name}) && $mac_reads->{$aln->name}==$aln->get_tag_values('FIRST_MATE')){ 
+		if(defined($mac_reads->{$rname}) && $mac_reads->{$rname}==$aln->get_tag_values('FIRST_MATE')){ 
 			$read_cat{$rname}->{$step}="flagged_as_mac"; $total--; next;}
 
+# If RNAseq option is set : transform all \dM\dN\dM reads into \M reads.
+		if($TOPHAT_MAPPING && $rcigar=~/(\d+)M(\d+)N(\d+)M/){
+			my $fm=$1+$2+$3;
+			$rcigar="$fm\M";
+			if($step ne "MAC" &&
+				$1+$rstart <= $position +$min_left_dist && 
+				$1+$rstart+$2 >= $position+1 - $min_right_dist ){
+					
+					$read_cat{$rname}->{$step}="too_close_to_TA";
+					next;
+					
+			}
+		}
+
 # Filtering on alignement profil (cigar), positions of the read compare to the TA
-		if (_allowed_cigar($aln->cigar_str)==0){ 
+		if (_allowed_cigar($rcigar)==0){ 
 			$read_cat{$rname}->{$step}="mapping_not_allowed";next;}
-		if($aln->start >= $position - $min_left_dist){ 
+		if($rstart >= $position - $min_left_dist){ 
 			$read_cat{$rname}->{$step}="too_close_to_TA";next;}
-		if($aln->end <= $position+1 + $min_right_dist){ 
+		if($rend <= $position+1 + $min_right_dist){ 
 			$read_cat{$rname}->{$step}="too_close_to_TA"; next;}
 
 
@@ -458,21 +494,27 @@ sub _get_counts {
 
 	# Recording read name
 		if($step eq "MAC"){
-			$read_names{$aln->name}=$aln->get_tag_values('FIRST_MATE');$mac++;
+			$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
 			$read_cat{$rname}->{$step}="MAC";
 		}
 		elsif($step eq "LEFT"){
-			if(!defined($mac_reads->{$aln->name})){
-				$read_names{$aln->name}=$aln->get_tag_values('FIRST_MATE');$mac++;
+			if(!defined($mac_reads->{$rname})){
+				$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
 				$read_cat{$rname}->{$step}="MIC";
 			}
 		}
 		else{ # Counting on the right Boundaries of the IES
-			if(!defined($mac_reads->{$aln->name}) && !defined($left_reads->{$aln->name})){
-				$read_names{$aln->name}=$aln->get_tag_values('FIRST_MATE');$mac++;
+			if(!defined($mac_reads->{$rname}) && !defined($left_reads->{$rname})){
+				$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
 			}
 			$read_cat{$rname}->{$step}="MIC";
 			$nw_mapped++;
+#			if($$self->{SCORE_METHOD} eq "Boundaries" && !defined($mac_reads->{$rname})){
+#				$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
+#			}else{
+#				$read_cat{$rname}->{$step}="MIC";
+#				$nw_mapped++;
+#				}
 		}
 	}
 	return ($mac,$nw_mapped,$total,\%read_names, \%read_cat);

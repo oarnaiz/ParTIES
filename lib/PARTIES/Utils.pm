@@ -328,14 +328,14 @@ sub significant_retention_score {
    
    
    my $method = $parameters->{METHOD};
-   my $tab_file =$parameters->{TAB_FILE};
+   my $tmp_file =$parameters->{TMP_FILE};
    my $bin_dir =$parameters->{BIN_DIR};
 
 
    my %significant;
 
    ## Writes the tabulated file that will be used by the R procedure
-   open(TAB, ">$tab_file") or die "Can not open $tab_file";
+   open(TAB, ">$tmp_file") or die "Can not open $tmp_file";
 
    if($method eq 'Boundaries'){
       print TAB join("\t", qw(ID CTL_MAC CTL_LEFT CTL_RIGHT CTL_RS_LEFT CTL_RS_RIGHT CUR_MAC CUR_LEFT CUR_RIGHT CUR_RS_LEFT CUR_RS_RIGHT))."\n";	   
@@ -370,15 +370,15 @@ sub significant_retention_score {
    ## Calls the R procedures and retrieves the results
    my $R = Statistics::R->new();
 #   my $path=$self->{PATH};
-   $R->send('in_file="'.$tab_file.'"');
-   $R->send('out_file="'.$tab_file.'"');
+   $R->send('in_file="'.$tmp_file.'"');
+   $R->send('out_file="'.$tmp_file.'"');
    $R->send('method="'.$method.'"');   
    my $source_file=$bin_dir."/utils/miret_control_comparison.R";
    $R->send('source("'.$source_file.'")');
    $R->stopR();
 
    ## read results 
-   open(TAB, "$tab_file") or die "Can not open $tab_file";
+   open(TAB, "$tmp_file") or die "Can not open $tmp_file";
    my $header = <TAB> ;  # header
    chomp $header;
    my @header = map { lc $_ } split("\t", $header);
@@ -392,6 +392,7 @@ sub significant_retention_score {
       }
    }
    close TAB;
+   unlink $tmp_file;
 
    return %significant;
 }

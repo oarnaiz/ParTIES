@@ -47,11 +47,11 @@ This software is distributed under the GNU GPL v3 license. See the "LICENSE" fil
 
 
 
-
 # How to cite
 If you use this software please cite the following publication
 
-
+Denby Wilkes C, Arnaiz O, Sperling L. ParTIES : a toolbox for Paramecium interspersed DNA elimination studies. 
+Bioinformatics. 2015 Nov 20. pii: btv691. [Epub ahead of print] PubMed PMID: 26589276.
 
 
 
