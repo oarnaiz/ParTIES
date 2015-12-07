@@ -451,7 +451,7 @@ sub _get_counts {
 	$step="LEFT" if(!defined($mac_reads->{"MAC"}) && defined($left_reads->{"RIGHT"}) );
 	$step="RIGHT" if(!defined($mac_reads->{"MAC"}) && !defined($left_reads->{"RIGHT"}) );
         
-	my $TOPHAT_MAPPING = ($self->{TOPHAT} eq 'TRUE') ? 1 : 0;
+	my $TOPHAT_MAPPING = ($$self->{TOPHAT} eq 'TRUE') ? 1 : 0;
 	foreach my $aln ($$segment->features() ){
 		$total++;
 		my ($rname, $rcigar, $rstart, $rend)=($aln->name, $aln->cigar_str, $aln->start, $aln->end);
