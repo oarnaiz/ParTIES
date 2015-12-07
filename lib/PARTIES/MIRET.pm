@@ -385,7 +385,7 @@ sub finish {
    
           foreach my $key (keys %FILE_EXTENSIONS) {
              my $fext = ($FILE_EXTENSIONS{$key}->{EXT}) ? $FILE_EXTENSIONS{$key}->{EXT} : $key;
-             next if($fext!~/\.gff3$/);
+             next if($fext!~/gff3$/);
              my $gff_file = $self->{PATH}."/".$self->get_mode.'.'.$fext;
              my $tab_file = $gff_file ;
              $tab_file=~s/\.gff3$/\.tab/;
