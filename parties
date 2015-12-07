@@ -42,7 +42,7 @@ my ($SKIP_VELVET_ASSEMBLY,$NO_ZIP,@KMER);
 my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH,$SKIP_REPEAT_MASKER,$SEQUENCES_PER_BLAT_BATCH);
 
 # MIRET PARAMETERS
-my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE);
+my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE, $TOPHAT);
 
 # MILORD PARAMETERS
 my ($MIN_SIZE, $MAX_SIZE, $REPORT_READ_NAMES);
@@ -131,6 +131,7 @@ GetOptions(
 	    '-germline_bam=s' => \$GERMLINE_BAM,
 	    '-score_method=s' => \$SCORE_METHOD,
 	    '-control=s' => \$CONTROL,
+	    '-tophat' => \$TOPHAT,
 
 	# MILORD options
 	    '-min_size=s' => \$MIN_SIZE,
@@ -216,6 +217,7 @@ my $factory = $PACKAGE->new({
 			        -germline_bam => $GERMLINE_BAM,
 			        -score_method => $SCORE_METHOD,
 			        -control => $CONTROL,
+				-tophat => $TOPHAT ? 'TRUE' : 'FALSE',
 
 				# MILORD options
 				-min_size => $MIN_SIZE,
