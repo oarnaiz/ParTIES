@@ -318,6 +318,7 @@ sub _calculate_blat_file {
         }
 	$qio->close;
 	
+	mkdir $self->{PATH}."/tmp/".$base_name_assembly;
 	# write fasta
 	my $number_of_sequence_by_batch = $self->{SEQUENCES_PER_BLAT_BATCH};
 	my @qseq_ids = shuffle(@qseqs);
@@ -329,9 +330,9 @@ sub _calculate_blat_file {
 	
            if($n == 0 or $n >= $number_of_sequence_by_batch) {
                $out->close if($out);
-	       my $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+	       my $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/".$base_name_assembly."/")->filename;
 	       while(-e "$base_filename.fa") {
-	          $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/")->filename;
+	          $base_filename = File::Temp->new(DIR => $self->{PATH}."/tmp/".$base_name_assembly."/")->filename;
 	       }
                $out = new Bio::SeqIO(-file =>">$base_filename.fa" ,-format => 'Fasta');
                push @base_files,$base_filename;
@@ -355,7 +356,7 @@ sub _calculate_blat_file {
 
 	# compile all results
 	system("cat ".join(".blat ",@base_files,'')." > $blat_file");
-        system("rm ".$self->{PATH}."/tmp/*.blat");
+        system("rm -rf ".$self->{PATH}."/tmp/".$base_name_assembly);
 
 	
         #system(PARTIES::Config->get_program_path('blat')." ".$self->{GENOME}." ".$assembly." -t=dna -q=dna -noHead -minScore=$insert_size $blat_file");
