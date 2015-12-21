@@ -108,7 +108,7 @@ GetOptions(
 	    '-not_bounded_by_ta' => \$NOT_BOUNDED_BY_TA,
 	    '-repeat_masker_parameters=s' => \$REPEAT_MASKER_PARAMETERS,
 	    '-skip_repeat_masker' => \$SKIP_REPEAT_MASKER,
-	    '-sequences_per_blat_batch' => \$SEQUENCES_PER_BLAT_BATCH,
+	    '-sequences_per_blat_batch=i' => \$SEQUENCES_PER_BLAT_BATCH,
 
 	# Insert options    
 	    '-ies=s' => \$IES_FILE,

@@ -355,7 +355,10 @@ sub _calculate_blat_file {
         $pm->wait_all_children; 
 
 	# compile all results
-	system("cat ".join(".blat ",@base_files,'')." > $blat_file");
+	system("rm -f $blat_file && touch $blat_file");
+	foreach my $base_file (@base_files) {
+	   system("cat $base_file.blat >> $blat_file");
+	}
         system("rm -rf ".$self->{PATH}."/tmp/".$base_name_assembly);
 
 	
