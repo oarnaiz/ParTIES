@@ -222,7 +222,7 @@ my $factory = $PACKAGE->new({
 				# MILORD options
 				-min_size => $MIN_SIZE,
 				-max_size => $MAX_SIZE,
-				-report_read_names => $REPORT_READ_NAMES,
+				-report_read_names => $REPORT_READ_NAMES ? 'TRUE' : 'FALSE',
 				
 				# Compare options
 				-reference_set => $REFERENCE_SET_FILE,
