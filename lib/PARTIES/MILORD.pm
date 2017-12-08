@@ -260,7 +260,7 @@ sub calculate {
     			    $results{$indel}->{end},
     			    '.', '.', '.', '');
     	    foreach my $att (sort keys %{$results{$indel}}){
-    		    next if($att eq "read_names" &&  $self->{REPORT_READ_NAMES});
+    		    next if($att eq "read_names" &&  $self->{REPORT_READ_NAMES} eq 'TRUE');
     		    print GFF $att."=".$results{$indel}->{$att}.";";
     	    }
     	    print GFF "\n";
