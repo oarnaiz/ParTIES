@@ -113,7 +113,7 @@ sub _check_mandatory_parameters {
   # IF MODE AUTO
   if($self->auto) {  
      
-     if($self->{USE_INSERT_REFERENCE}) {
+     if($self->{USE_INSERT_REFERENCE} eq 'TRUE') {
         $self->{GENOME} = $self->{OUT_DIR}."/Insert/Insert.fa" if(-e $self->{OUT_DIR}."/Insert/Insert.fa");
 	
         my $out_bam = $self->{OUT_DIR}."/Map/".basename($self->{OUT_DIR}).".Insert.fa.BOWTIE.sorted.bam";
