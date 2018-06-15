@@ -290,7 +290,7 @@ exit 1;
 #############################################
 
 sub usage {
-   print STDERR "$0 [MODE] : PARamecium Toolbox for Interspersed DNA Elimination Studies\n";   
+   print STDERR "$0 [MODE] : PARamecium Toolbox for Interspersed DNA Elimination Studies (Version $VERSION)\n";   
    foreach my $mode (sort {$MODES{$a}->{N} <=> $MODES{$b}->{N}} keys %MODES) {
       print STDERR " $mode : $MODES{$mode}->{DESC}\n";
    }
