@@ -413,12 +413,14 @@ sub _get_boundary_relation {
    my ($ies_sequence) = @{$ies->{attributes}->{sequence}};
    
    my ($feat_sequence) = @{$feat->{attributes}->{sequence}};
+   
    my ($feat_start,$feat_end) = ($feat->{start},$feat->{end});
    my ($starts_distance,$ends_distance) = (abs($feat_start-$start), abs($feat_end-$end));
   
    my $boundary_relation;      
    # exactly the same
-   if($starts_distance <= $self->{MAX_DIST} and $ends_distance <= $self->{MAX_DIST} and $ies_sequence eq $feat_sequence) {
+   if(($starts_distance <= $self->{MAX_DIST} and $ends_distance <= $self->{MAX_DIST} and $ies_sequence eq $feat_sequence)
+     or (PARTIES::Utils->compare_IES_seq($ies_sequence, $feat_sequence) and $starts_distance==$ends_distance)) {
       ($boundary_relation) = ('identical');
    # same position 
    } elsif($starts_distance <= $self->{MAX_DIST} and $ends_distance <= $self->{MAX_DIST}) {
@@ -451,6 +453,7 @@ sub _get_boundary_relation {
    } else {
        ($boundary_relation) = ('no_overlap');  
    }
+
    return $boundary_relation;
 
 }

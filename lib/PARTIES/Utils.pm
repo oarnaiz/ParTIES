@@ -480,6 +480,30 @@ sub get_junction_seq {
 }
 
 
+  
+=head2 compare_IES_seq
+
+ Title   : Compare two IES sequence
+ Usage   : compare_IES_seq($ies_sequence, $feat_sequence)
+ Function: 
+ Returns : Boolean 
+ Args    : ($seq1, $seq2) 
+
+=cut
+sub compare_IES_seq {
+   my ($self,$seq1, $seq2) = @_;
+   return 0 if(!$seq1 or !$seq2 or length($seq1) != length($seq2));
+   return 1 if($seq1 eq $seq2);
+   for(my $c=1;$c<=10;$c++) {
+      return 1 if($seq1 eq substr($seq2,$c).substr($seq2,0,$c));
+   }
+   for(my $c=1;$c<=10;$c++) {
+      return 1 if($seq2 eq substr($seq1,$c).substr($seq1,0,$c));
+   }
+   
+   return 0;
+}
+
 
 
 

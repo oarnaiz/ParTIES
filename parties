@@ -3,7 +3,7 @@ use strict;
 use FindBin qw($Bin);
 use lib "$Bin/lib/";
 
-my $VERSION = 1.00;
+my $VERSION = 1.02;
 
 use Getopt::Long;
 use Parallel::ForkManager;
