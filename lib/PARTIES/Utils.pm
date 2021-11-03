@@ -26,16 +26,27 @@ use List::MoreUtils qw(uniq);
 =cut
 
 sub read_gff_file {
-   my ($self,$gff_file) = @_;
+   my ($self,$gff_file,$params) = @_;
    
    my %features;
+   my %check_unicity;
+   
    open(FILE,$gff_file) or die "No gff file : $gff_file";
    while(<FILE>) {
       chomp;
       next if /^#/;
       my $feat = gff3_parse_feature($_);
       if(!$feat->{attributes}->{Parent}) {
-         push @{$features{$feat->{seq_id}}},$feat;
+          my $skip = 0;
+          if($params and $params->{check_unicity} == 1) {
+              my $unicity_name = join("_",$feat->{seq_id},$feat->{start},$feat->{end},$feat->{type});
+              if($check_unicity{$unicity_name}) {
+                  $self->stderr("Warning $unicity_name already exists\n" );
+                  $skip=1;
+              }
+              $check_unicity{$unicity_name}=1;
+          }
+         push @{$features{$feat->{seq_id}}},$feat if(!$skip);
       }
    }
    close FILE;
@@ -189,6 +200,7 @@ sub get_InDel_from_aln {
    
    my $FH_ERR = $parameters->{ERROR_FILE_HANDLER} if($parameters->{ERROR_FILE_HANDLER});
    my $NOT_BOUNDED_BY_TA = ($parameters->{NOT_BOUNDED_BY_TA} eq 'TRUE') ? 1 : 0;
+   #my $CONSIDER_DELETION_INTER_SEQ = ($parameters->{CONSIDER_DELETION_INTER_SEQ} eq 'TRUE') ? 1 : 0;
    
    my $CHECK_BREAK_POINTS = ($parameters->{CHECK_BREAK_POINTS}) ? $parameters->{CHECK_BREAK_POINTS} : 0;
    my $MIRAA_BREAK_POINTS = $parameters->{MIRAA_BREAK_POINTS};
@@ -199,6 +211,8 @@ sub get_InDel_from_aln {
    my $MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS = ($parameters->{MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS} ne '') ? $parameters->{MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS} : 0;
    my $SAMPLE_SAM = $parameters->{SAMPLE_BAM} if($parameters->{SAMPLE_BAM});
    my $CTL_SAM = $parameters->{CONTROL_BAM} if($parameters->{CONTROL_BAM});
+   
+   my $IS_COHERENT = ($parameters->{IS_COHERENT} eq 'FALSE') ? 0 : 1;
 
    my @InDels;
    return @InDels if($taln!~/-/);
@@ -206,13 +220,13 @@ sub get_InDel_from_aln {
    # get length of opening gap if any:
    my $open = 0;
    if ($taln =~ /^([-]+)[ACGT]/) { $open = length($1) }
-   
+   #print STDERR "$qaln\n$taln\n";
    die "ERROR length alignmenet taln_length=".length($taln)." qaln_length=".length($qaln)."\n" if(length($taln) != length($qaln));
    while($taln =~ /[ACGT]([-]+)[ACGT]/g) {
       my $gap = length($1);
       my $pos = pos($taln);
       my $ins = substr($qaln,$pos - $gap - 1,$gap); 
-      
+      #print STDERR $ins," $gap\n" if($ins=~/X/);
       # min gap length
       if($gap >= $MIN_INDEL_LENGTH) {         
 	 my $nb_short_indel_in_query_before_current_gap = scalar @{[substr($qaln,0,$pos - $gap - 1) =~ /-/g]};
@@ -251,12 +265,13 @@ sub get_InDel_from_aln {
 	      and $self->number_of_mismatches_between_sequences($taln_left_flank,$qaln_left_flank) <= $max_mismatch 
 	      and $self->number_of_mismatches_between_sequences($taln_right_flank,$qaln_right_flank) <= $max_mismatch) {
 	    
-	       ($indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start) = _adjust_InDel_position($seq,$indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start);
+	       ($indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start) = _adjust_InDel_position($seq,$indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start,$IS_COHERENT);
 
+               #print STDERR "number_of_mismatches_between_sequences", join(',',($indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start)),"\n" if($qname eq 'NS500446:494:HCHMCAFXY:2:11103:9940:15050');
 	       
 	       if(!$CHECK_BREAK_POINTS or _check_break_point($seq,$indel_position,$MIRAA_BREAK_POINTS,$SAMPLE_SAM)) {
 	 	  my $InDel ;
-		  
+                  #print STDERR "CHECK_BREAK_POINTS $ins $taln_right_flank\n" if($qname eq 'NS500446:494:HCHMCAFXY:2:11103:9940:15050');
 	 	  if ($ins =~ /^TA/ and $taln_right_flank=~/^TA/) {
 	 	     ($indel_position,$ins,$indel_start) = $self->_adjust_TA_InDel_consensus($seq,$indel_position,$ins,$taln_left_flank,$taln_right_flank,$indel_start);
  
@@ -267,12 +282,14 @@ sub get_InDel_from_aln {
 		     $InDel = { SEQ_ID => $seq->id, POS => $indel_position, SEQ => $ins, BOUNDED_BY_TA => 'TRUE', QNAME=> $qname , QPOS => $qpos };		     
 		     
 	 	  } elsif($NOT_BOUNDED_BY_TA and length($taln_left_flank)==$left_mac_flank_seq_length and length($taln_right_flank)==$right_mac_flank_seq_length) {
-	 	     ($indel_position,$ins,$indel_start) = _shift_left($seq,$indel_position,$ins,$taln_left_flank,$indel_start);
+                     #print STDERR "$indel_position,$ins,$taln_left_flank,$indel_start\n" if($qname eq 'NS500446:494:HCHMCAFXY:2:11103:9940:15050');
+	 	     ($indel_position,$ins,$indel_start) = _shift_left($seq,$indel_position,$ins,$taln_left_flank,$indel_start) if($IS_COHERENT);
 		     my $qpos = ($qstart+$indel_start-$nb_short_indel_in_query_before_current_gap);
 		     $qpos = ($qlength - $qpos - length($ins)) if($strand eq '-');
 		     $InDel = { SEQ_ID => $seq->id, POS => $indel_position, SEQ => $ins, BOUNDED_BY_TA => 'FALSE', QNAME=> $qname, QPOS => $qpos };
 	 	  }
 	    
+                  #print STDERR "InDel ok",%$InDel,"\n" if($qname eq 'NS500446:494:HCHMCAFXY:2:11103:9940:15050');
 	     	  if($InDel and _check_InDel_junction($seq,$indel_position,$CTL_SAM,$MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS)) {
 	 	     push @InDels,$InDel;
 	          }
@@ -281,6 +298,7 @@ sub get_InDel_from_aln {
 	 }
       }
    }
+   
    
    return @InDels;
 }
@@ -392,7 +410,8 @@ sub significant_retention_score {
       }
    }
    close TAB;
-   unlink $tmp_file;
+   print STDERR $tmp_file;
+   #unlink $tmp_file;
 
    return %significant;
 }
@@ -449,11 +468,7 @@ sub consensus_scores {
 sub generate_IES_id {
    my ($self,$prefix,$seq_id,$start,$end,$suffix) = @_;
    
-   my $seq_id_nb;
-   if($seq_id=~/(\d+)$/) { $seq_id_nb = $1; } 
-   elsif($seq_id=~/(\d+)_with_IES$/) { $seq_id_nb = $1; } 
-   elsif($seq_id=~/(\d+)$suffix$/) { $seq_id_nb = $1; } 
-   else { $seq_id_nb = $seq_id; }
+   my $seq_id_nb = $self->get_seq_id_number($seq_id,$suffix);
    
    #my $id = $PREFIX."_PGM_$scaffold_nb\_$ta";
    my @id = ($prefix,$seq_id_nb,$start);
@@ -462,6 +477,28 @@ sub generate_IES_id {
 }
 
 
+=head2 get_seq_id_number
+
+ Title   : Generated IES identifier
+ Usage   : get_seq_id_number($seq_id)
+ Function: 
+ Returns : Integer
+ Args    : ($seq_id,$suffix)
+
+=cut
+
+
+sub get_seq_id_number {
+   my ($self,$seq_id,$suffix) = @_;
+   
+   my $seq_id_nb;
+   if($seq_id=~/(\d+)$/) { $seq_id_nb = $1; } 
+   elsif($seq_id=~/(\d+)_with_IES$/) { $seq_id_nb = $1; } 
+   elsif($seq_id=~/(\d+)$suffix$/) { $seq_id_nb = $1; } 
+   else { $seq_id_nb = $seq_id; }
+   
+   return $seq_id_nb;
+}
   
 =head2 get_junction_seq
 
@@ -504,6 +541,69 @@ sub compare_IES_seq {
    return 0;
 }
 
+  
+=head2 revcomp
+
+ Title   : Reverse complement of a DNA seq
+ Usage   : revcomp($sequence)
+ Function: 
+ Returns : String 
+ Args    : ($seq) 
+
+=cut
+
+sub revcomp {
+   my ($self,$nt_seq) = @_;
+   $nt_seq = reverse $nt_seq;
+   return $self->comp($nt_seq);
+}
+
+=head2 comp
+
+ Title   : Complement of a DNA seq
+ Usage   : comp($sequence)
+ Function: 
+ Returns : String 
+ Args    : ($seq) 
+
+=cut
+
+sub comp {
+   my ($self,$nt_seq) = @_;
+   $nt_seq=~tr/ATGCatgc/TACGtacg/;
+   return $nt_seq;
+}
+
+=head2 clone_gff_object
+
+ Title   : Clone GFF3 object
+ Usage   : clone_gff_object($ies)
+ Function: 
+ Returns : Hash 
+ Args    : ($ies) 
+
+=cut
+sub clone_gff_object {
+   my ($self,$ies) = @_;
+   return '' if(!$ies);
+   my $clone = { 
+   		 seq_id => $ies->{seq_id},
+   		 source => $ies->{source},
+		 type => $ies->{type},
+		 start => $ies->{start},
+		 end=> $ies->{end},
+		 score=> $ies->{score},
+		 strand => $ies->{strand},
+		 phase=> $ies->{phase}
+		 };
+   
+   foreach my $key (keys %{$ies->{attributes}}) {
+      foreach my $value (@{$ies->{attributes}->{$key}}) {
+         push @{$clone->{attributes}->{$key}},$value;
+      }
+   }  
+   return $clone;
+}
 
 
 
@@ -585,9 +685,9 @@ sub _adjust_InDel_position {
 
 # Between equivalent postions : prefer these with the better consensus sequence (IES consensus score)
 sub _adjust_TA_InDel_consensus {
-   my ($self,$seq,$indel_position,$indel_seq,$taln_left_flank,$taln_right_flank,$qstart) = @_;
+   my ($self,$seq,$indel_position,$indel_seq,$taln_left_flank,$taln_right_flank,$qstart,$is_coherent) = @_;
    
-   return ($indel_position,$indel_seq,$qstart) if($taln_right_flank!~/^TATA/);
+   return ($indel_position,$indel_seq,$qstart) if($taln_right_flank!~/^TATA/ or !$is_coherent);
    
    my ($best_ies_seq,$best_shift,$best_left_score,$best_right_score);
    my $i=0;
@@ -611,9 +711,10 @@ sub _shift_left {
    # shift to left the most as possible
    my ($shift_left,$shift_right) = (0,0);
    my $i = 1;
-   while(substr($taln_left_flank,length($taln_left_flank)-$i,1) eq substr($indel_seq,length($indel_seq)-$i,1)) {
+   while(substr($taln_left_flank,length($taln_left_flank)-$i,1) eq substr($indel_seq,length($indel_seq)-$i,1) and $i<length($taln_left_flank)) {
       $shift_left++;
       $i++;
+      return ( $indel_position,$indel_seq,$qstart) if($i  >= length($taln_left_flank));
    }
    my $new_indel_seq=substr($taln_left_flank,length($taln_left_flank)-$shift_left).substr($indel_seq,0,length($indel_seq)-$shift_left);
    $indel_position-=$shift_left;
