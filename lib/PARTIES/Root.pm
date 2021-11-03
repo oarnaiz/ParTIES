@@ -17,6 +17,10 @@ use File::Basename;
 
 # COMMON PARAMETERS
 my %ROOT_PARAMETERS = (
+			VERSION => {
+				MANDATORY=>1, DEFAULT=>'?', TYPE=>'VALUE', RANK => 5,
+				DESCRIPTION=>"Version"
+				},
 			GENOME => {
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 0,
 				DESCRIPTION=>"Reference genome"
@@ -28,6 +32,14 @@ my %ROOT_PARAMETERS = (
 			SEQ_ID => {
 				MANDATORY=>0, DEFAULT=>'', TYPE=>'VALUE', RANK => 4,
 				DESCRIPTION=>"Calculate only on this seq_id"
+				},			
+            LIST_OF_SEQ => {
+				MANDATORY=>0, DEFAULT=>'', TYPE=>'VALUE', RANK => 4,
+				DESCRIPTION=>"File with a list of sequences to analyze"
+				},		
+			MIN_SEQ_LENGTH => {
+				MANDATORY=>0, DEFAULT=>0, TYPE=>'VALUE', RANK => 4,
+				DESCRIPTION=>"Calculate only on sequences longest than this parameter"
 				},		
 			THREADS => {
 				MANDATORY=>0, DEFAULT=>'6', TYPE=>'VALUE', RANK => 4,
@@ -51,7 +63,7 @@ my %ROOT_PARAMETERS = (
 				},			
 			AUTO => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 4,
-				DESCRIPTION=>"Enable auto-detection of parameters (usally filegenerated from other modules)"
+				DESCRIPTION=>"Enable auto-detection of parameters (usually files generated from other modules)"
 				},			
 			CHECK_CONFIG => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 4,
@@ -151,12 +163,12 @@ sub remove_temporary_files {
 ###################################
 
 sub _init {
-  my ($self) = @_;  
+  my ($self,$version) = @_;  
   
   $self->{TIME_POINT_0} = [gettimeofday];
   $self->{LAST_TIME_POINT} = $self->{TIME_POINT_0};
   
-  $self->stderr("Initiation\n");
+  $self->stderr("Initialization\n");
   # create out directory
   my $path = $self->{OUT_DIR}."/".$self->get_mode;
   
@@ -166,7 +178,8 @@ sub _init {
   system("mkdir -p $path/tmp");
   $self->{PATH}=$path;
 
-  $self->{LOG} = FileHandle->new(">$self->{PATH}/$STDLOG_FILE"); 
+  $self->{LOG} = FileHandle->new(">$self->{PATH}/$STDLOG_FILE");
+  $self->stdlog("# VERSION : ".$self->{VERSION}."\n"); 
   $self->stdlog("# COMMAND LINE :\n".join(" \\\n",$self->_command_line)."\n\n");
   $self->stdlog("# PATH OUT DIR : ".$self->{PATH}."\n\n"); 
   
@@ -186,6 +199,7 @@ sub _command_line {
    my %all_parameters=(%{$self->get_root_parameters}, %{$self->get_parameters});
    
    foreach my $param (sort keys %all_parameters) {
+      next if($param eq 'VERSION');
       my $type = $all_parameters{$param}->{TYPE} ;   
       if($type eq 'VALUE') {
         my $param_value = $self->{$param};
@@ -243,6 +257,7 @@ sub _usage {
   print STDERR "USAGE : \n$0 ".$self->get_mode."\n";
   my $last_rank;
   foreach my $param (sort {$all_parameters{$a}->{RANK} <=> $all_parameters{$b}->{RANK} } keys %all_parameters) {
+      next if($param eq 'VERSION');
      my $mandatory = '(MANDATORY)' if($all_parameters{$param}->{MANDATORY});
      my $type = $all_parameters{$param}->{TYPE};
      my $desc = $all_parameters{$param}->{DESCRIPTION};
