@@ -1,3 +1,12 @@
 Revision history for ParTIES
 
-1.00	First release
+1.00    First release
+
+1.02
+Minor changes
+
+1.03
+Fix small bug for MILORD module when you want to report read names 
+
+1.05 
+Add the Concatemer module
