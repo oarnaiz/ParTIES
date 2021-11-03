@@ -28,12 +28,12 @@ my %PARAMETERS = (
 				DESCRIPTION=>"Minimum size for a deletion to be reported"
 				},
 			MAX_SIZE => {
-				MANDATORY=>1, DEFAULT=>1e4, TYPE=>'VALUE', RANK => 3,
-				DESCRIPTION=>"Maximum size for a deletion to be reported (The maximum is 1e4, high values slows the calculation)"
+				MANDATORY=>1, DEFAULT=>1e3, TYPE=>'VALUE', RANK => 3,
+				DESCRIPTION=>"Maximum size for intra-chromosomic deletion to be reported (Inf for no restriction)"
 				},
 			JUNCTION_FLANK_SEQ_LENGTH => {
 				MANDATORY=>1, DEFAULT=>15, TYPE=>'VALUE', RANK => 3,
-				DESCRIPTION=>"Length of the flanking sequence to report, arround the deletion"
+				DESCRIPTION=>"Length of the flanking sequence to report, around the deletion"
 				},
 			NOT_BOUNDED_BY_TA => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 2,
@@ -47,17 +47,27 @@ my %PARAMETERS = (
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
 				DESCRIPTION=>"Try to use the result of the Insert module as the reference genome"
 				},	
-			REPORT_READ_NAMES => {
+			REPORT_READS => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
 				DESCRIPTION=>"Should read names be reported when showing a deletion"
 				},	
-
+			CONSIDER_TRANS_DELETION => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 2,
+				DESCRIPTION=>"Consider deletion between sequences (trans-deletions) or superior to -max_size"
+				},			
+			CONSIDER_OVERLAPPING => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 2,
+				DESCRIPTION=>"Consider overlapping deletions"
+				}
 		);
 
 
 
 my %FILE_EXTENSIONS = ( 
-			gff3 => {DESC=> 'GFF3 file', EXT => 'gff3' },		
+			gff3 => {DESC=> 'GFF3 file', EXT => 'gff3' },	
+			stats => {DESC=> 'Stats file', EXT => 'stats' },
+			'R1.sam' => {DESC=> 'SAM file Part 1', EXT => 'R1.sam' },	
+			'R2.sam' => {DESC=> 'SAM file Part 2', EXT => 'R2.sam' },		
 			 );
 
 =head2 new
@@ -152,7 +162,16 @@ sub get_file_extensions {
 
 sub init {
   my ($self) = @_;  
-  $self->SUPER::_init;
+  $self->SUPER::_init;  
+  
+  
+  # load GENOME file
+  #if( $self->{CONSIDER_TRANS_DELETION} eq 'TRUE') {
+     $self->stderr("Read ".basename($self->{GENOME})." ... " );
+     $self->{LOADED_GENOME} = PARTIES::Utils->read_fasta_file($self->{GENOME});
+     $self->stderr("Done\n" );
+  #}
+
 }
 
 
@@ -168,108 +187,136 @@ sub init {
 
 
 sub calculate {
-  my ($self,$seq) = @_;  
-  my $seq_id = $seq->id;
+   my ($self,$seq) = @_;  
+   my $seq_id = $seq->id;
+
+   $self->stderr("Calculation $seq_id\n");
   
-  $self->stderr("Calculation $seq_id\n");
-  my $sam = new Bio::DB::Sam( -bam => $self->{BAM}, -fasta => $self->{GENOME}, -expand_flags => 'true');
-  my $file2locate=$self->{PATH}."/tmp/".$seq_id."_tolocate.fa";
-  my $current_seq= $seq->seq;
-  
-  
-########
-# Step 1 : Gathering partially mapped reads
-#			=> Parse the BAM file to detect partially mapped reads
-#			=> Hash with partially mapped reads
-#			=> File with unmapped sequences
-#	$self->stderr("Gathering partially mapped reads on $seq_id\n");
-   my %reads=$self->_gather_partially_mapped(\$sam, $seq_id, $file2locate);
-   $self->{$seq_id}->{PARTIAL_MAP}+=scalar(keys %reads);
-   return 1 if(scalar(keys %reads)==0);
+   my $sam = new Bio::DB::Sam( -bam => $self->{BAM}, -fasta => $self->{GENOME}, -expand_flags => 'true');
+   
+   
+   my %stats;
+   
+   ########
+   # Step 1 : Gathering partially mapped reads
+   #			=> Parse the BAM file to detect partially mapped reads
+   #			=> Hash with partially mapped reads
+   #			=> File with unmapped sequences
+   #	$self->stderr("Gathering partially mapped reads on $seq_id\n");  
+   #$self->stderr("_get_partially_mapped $seq_id\n");
+   my %reads = $self->_get_partially_mapped($sam,$seq_id,\%stats);
 
-	
-
-########
-# Step 2 : Retrieving unmapped sequence localization
-#			=> Create single scaffold reference
-#			=> Index the reference (BOWTIE2)
-#			=> Map the sequences on the new ref (BOWTIE2)
-#	$self->stderr("Remapping reads on $seq_id\n");
-   my ($new_mapping, $new_ref)=$self->_bowtie2_mapping($seq_id, \$current_seq, $file2locate);
-
-
-########
-# Step 3 : Reconstituting the read structure
-#			=> Parse the BOWTIE2 mapping
-#			=> Check coherence between initially mapped read part and newly mapped part
-#			=> Determine the theoric difference between the read and the reference
-#	$self->stderr("Read reconstitution on $seq_id\n");
-   $self->_reconstitute_read_structure(\%reads, $new_mapping, $new_ref, $seq_id, \$current_seq);
-
-########
-# Step 4 : Simplifiing Complexity
-#			=> Parse the Hash of reads to look for similar coordinates
-#			=> Merge similar observations
-#	$self->stderr("Building segments from $seq_id\n");
+   
    my %segments;
-   $self->_get_segment_from_reads(\%reads, \%{$segments{$seq_id}}, $seq_id, \$current_seq);
+   
+   if(scalar keys %reads) {
 
-   $self->{$seq_id}->{COHERENT_SEGMENTS}+=scalar(keys %{$segments{$seq_id}});
+       ########
+       # Step 2 : Retrieving unmapped sequence localization
+       #			=> Create single scaffold reference
+       #			=> Index the reference (BOWTIE2)
+       #			=> Map the sequences on the new ref (BOWTIE2)
+       #	$self->stderr("Remapping reads on $seq_id\n");   
+       #$self->stderr("_align_reads $seq_id\n");
+       my ($bam_file_for_partially_mapped_reads,$target_reference) = $self->_align_reads(\%reads,$seq);
 
-########
-# Step 5 : Detecting TA bounded deletions
-#			=> Run muscle alignment
-#			=> Use the get_IES_from_aln
-#   $self->stderr("Refining segments on $seq_id\n");
-    $self->_refine_segments(\%{$segments{$seq_id}}, $seq_id, \$current_seq, $sam);
+       ########
+       # Step 3 : Reconstituting the read structure
+       #			=> Parse the BOWTIE2 mapping
+       #			=> Check coherence between initially mapped read part and newly mapped part
+       #			=> Determine the theoric difference between the read and the reference
+       #	$self->stderr("Read reconstitution on $seq_id\n'");
+       #$self->stderr("_get_deletions $seq_id\n");
+       my @deletions = $self->_get_deletions(\%reads,$seq,$bam_file_for_partially_mapped_reads,$target_reference,\%stats);
+       
+       ########
+       # Step 4 : Simplifiing Complexity
+       #			=> Parse the Hash of reads to look for similar coordinates
+       #			=> Merge similar observations
+       #	$self->stderr("Building segments from $seq_id\n");
+       #$self->stderr("_simplify $seq_id\n");
+       %segments = $self->_simplify(\@deletions,$seq_id,$sam);
+   }
 
-#   $self->stderr("Merging results on $seq_id\n");
-    my %results;
-    foreach my $i (sort {$segments{$seq_id}->{$a}->{start}<=>$segments{$seq_id}->{$b}->{start}} keys %{$segments{$seq_id}}){
-    	    next if($segments{$seq_id}->{$i}->{tobereported}==0);
-    	    my $indel_id=PARTIES::Utils->generate_IES_id($self->{PREFIX},$seq_id,$segments{$seq_id}->{$i}->{start},$segments{$seq_id}->{$i}->{end});
-    	    if(defined($results{$indel_id})){
-    		    $results{$indel_id}->{support_ref}+=$segments{$seq_id}->{$i}->{support_ref};
-    		    $results{$indel_id}->{support_variant}+=$segments{$seq_id}->{$i}->{support_variant};
-    		    $results{$indel_id}->{read_names}=join(',',$results{$indel_id}->{read_names}, @{$segments{$seq_id}->{$i}->{read_names}});
-    	    }
-    	    else{
-    		    $results{$indel_id}={
-    			    start => $segments{$seq_id}->{$i}->{start},
-    			    end => $segments{$seq_id}->{$i}->{end},
-    			    ID => $indel_id,
-    			    Name => $indel_id,
-    			    junction_seq => $segments{$seq_id}->{$i}->{junction_seq},
-    			    sequence => $segments{$seq_id}->{$i}->{sequence},
-    			    bounded_by_ta => $segments{$seq_id}->{$i}->{bounded_by_ta},
-    			    support_ref => $segments{$seq_id}->{$i}->{support_ref}, 
-    			    support_variant => $segments{$seq_id}->{$i}->{support_variant},
-    		    };
-    		    $results{$indel_id}->{read_names} = join(',', @{$segments{$seq_id}->{$i}->{read_names}}); 
-    	    }
-    }
-    $self->stdlog(join("\t",$seq_id, $self->{$seq_id}->{PARTIAL_MAP}, $self->{$seq_id}->{COHERENT_SEGMENTS}, scalar(keys %results))."\n");
-#   $self->stderr("Writting results from on $seq_id\n");
 
-    ## Writes the final GFF file
-    my $gff_file = $self->{PATH}."/tmp/".$seq_id.".gff3";
-    open(GFF,">$gff_file") or die "Can not open $gff_file";
-    foreach my $indel (sort {$results{$a}->{start}<=>$results{$b}->{start}} keys %results){
-    	    print GFF join("\t", $seq_id, 'MILORD', 'internal_eliminated_sequence',
-    			    $results{$indel}->{start}, 
-    			    $results{$indel}->{end},
-    			    '.', '.', '.', '');
-    	    foreach my $att (sort keys %{$results{$indel}}){
-    		    next if($att eq "read_names" &&  $self->{REPORT_READ_NAMES} eq 'FALSE');
-    		    print GFF $att."=".$results{$indel}->{$att}.";";
-    	    }
-    	    print GFF "\n";
-    }
-    close(GFF);
-    my %toreturn;
-    $toreturn{$self->get_mode()}->{$seq_id}=\%results;
-    return %toreturn;
-}	
+
+   if(%segments) {
+       $self->stderr("Write GFF $seq_id\n" );
+       ## Writes the final GFF file
+       my $gff_file = $self->{PATH}."/tmp/".$seq_id.".gff3";
+
+       open(GFF,">$gff_file") or die "Can not open $gff_file";
+       foreach my $segment_id (sort {$segments{$a}->{start}<=>$segments{$b}->{start}} keys %segments) {
+          my ($start,$end,$strand);
+          my @attributes= ("ID=$segment_id","Name=$segment_id");
+          foreach my $key (qw(bounded_by_ta size deletion_type is_coherent is_overlapping support_variant support_ref)) {
+             push @attributes,"$key=".$segments{$segment_id}->{$key} if($key and $segments{$segment_id}->{$key});
+          }
+          
+          
+          if(length($segments{$segment_id}->{sequence})  > $self->{MAX_SIZE}) {
+              my $trim_seq= substr($segments{$segment_id}->{sequence},0,$self->{MIN_SIZE}).'XXX'.substr($segments{$segment_id}->{sequence},length($segments{$segment_id}->{sequence})-$self->{MIN_SIZE});
+              push @attributes,"sequence=$trim_seq";
+          } else {
+              push @attributes,"sequence=".$segments{$segment_id}->{sequence};
+          }
+          
+          
+          if($segments{$segment_id}->{is_coherent} eq 'TRUE') {
+             ($start,$end,$strand) = ($segments{$segment_id}->{start}, $segments{$segment_id}->{end},'.');
+          } else {
+             ($start,$end) = ($segments{$segment_id}->{start}, $segments{$segment_id}->{start});
+             foreach my $key (qw(target_seq_id)) {
+                push @attributes,"$key=".$segments{$segment_id}->{$key} if($key and $segments{$segment_id}->{$key});
+             }
+         
+             $strand = ($segments{$segment_id}->{aln_type} eq 'MS') ? '+' : '-';
+             my $target_strand = ( ($segments{$segment_id}->{aln_type} eq 'MS' and $segments{$segment_id}->{strand}->[1] < 0) 
+                    or ($segments{$segment_id}->{aln_type} eq 'SM' and $segments{$segment_id}->{strand}->[1] > 0)) 
+                    ? '+' :'-';
+         
+         
+         
+             push @attributes,"target_pos=".$segments{$segment_id}->{end},"target_strand=$target_strand";
+          
+          }
+          if($self->{REPORT_READS} eq 'TRUE') {
+              my @read_names = @{$segments{$segment_id}->{read_names}};
+              @read_names = ($read_names[0],$read_names[1],$read_names[2],$read_names[3],'...') if(scalar @read_names > 4);
+              #die @read_names if(scalar @{$segments{$segment_id}->{read_names}} > 4);
+             push @attributes,"read_names=".join(',',@read_names);
+          }
+          print GFF join("\t", $segments{$segment_id}->{seq_id}, 'MILORD', 'internal_eliminated_sequence',
+                      $start, 
+                      $end,
+                      '.', $strand, '.', join(";",@attributes)),"\n";      
+       
+       
+
+       }
+       close(GFF); 
+   }
+   my %results;
+   $results{$self->get_mode()}->{$seq_id} = \%segments;
+   
+   
+   my $stats_file = $self->{PATH}."/tmp/$seq_id.stats";
+   open(STATS,">$stats_file") or die "Can not open $stats_file";
+   my @stats_line = ($seq_id);
+   my @stats_columns = qw(NB_READs NB_READ_TO_REMAP NB_READ_REMAPPED NB_READ_CONSIDERED NB_READ_SHOWING_DELETION NB_READ_REMAPPED_but_mismatch NB_READ_REMAPPED_but_not_full_match NB_READ_REMAPPED_but_close_to_borders NB_READ_REMAPPED_but_overlapping NB_READ_REMAPPED_but_too_short_or_long);
+   print STATS "#",join("\t",'SEQ_ID',@stats_columns),"\n";   
+   foreach my $key (@stats_columns){
+      push @stats_line, ($stats{$key}) ? $stats{$key} : 0;
+   }
+   print STATS join("\t",@stats_line),"\n";
+   close STATS;
+   
+   
+   system("rm -f ".$self->{PATH}."/tmp/$seq_id*.fa* ".$self->{PATH}."/tmp/*$seq_id*.bam*");
+      
+   $self->stderr("End calculation $seq_id\n" );
+   return %results;
+}
 
 =head2 finish
 
@@ -281,353 +328,722 @@ sub calculate {
 =cut
 
 sub finish {
-	my ($self, $results)=@_;
-	$results=$results->{$self->get_mode()};
-	my %stats;
- 	foreach my $seq_id (keys %{$results}){
-		foreach my $i (keys %{$results->{$seq_id}}){
-			my $type=$results->{$seq_id}->{$i}->{type};
-			$stats{$type}->{obs}+=$results->{$seq_id}->{$i}->{support_variant};
-			$stats{$type}->{nb}++;
-		}
-		$stats{partial_map}->{counts}+=$self->{PARTIAL_MAP}->{$seq_id};
-		$stats{coherent_segments}->{counts}+=$self->{COHERENT_SEGMENTS}->{$seq_id};
-	}
-	foreach my $k (keys %stats){
-		foreach my $st (keys %{$stats{$k}}){
-			$self->stdlog(" $k - $st = ".$stats{$k}->{$st}."\n");
-		}
-	}
-	$self->SUPER::finish;
+   my ($self, $results)=@_;
+   my $mode = $self->get_mode();
+
+   $self->SUPER::finish;
+   
+   if($self->{REPORT_READS} eq 'TRUE') {
+      $self->stderr("Report reads\n");
+      my $samtools = PARTIES::Config->get_program_path('samtools');
+      my $ref = $self->{GENOME};
+      foreach my $part (qw(R1 R2)) {
+         my $base_sam = $self->{PATH}."/$mode.$part";
+         #system("$samtools view -Sb -T $ref $base_sam.sam 2> /dev/null | samtools sort - $base_sam.sorted > /dev/null 2>&1 && $samtools index $base_sam.sorted.bam && rm $base_sam.sam");
+         system("$samtools view -Sb -T $ref $base_sam.sam > $base_sam.bam 2> /dev/null && rm $base_sam.sam");
+      }
+   }
+   
 }
 
 
 
+sub _simplify {
+   my ($self,$deletions,$seq_id,$sam) = @_;
+   
+   my %segments;
+   if($self->{REPORT_READS} eq 'TRUE') {
+      open(FIRSTSAM,">". $self->{PATH}."/tmp/".$seq_id.".R1.sam") or die $self->{PATH}."/tmp/".$seq_id.".R1.sam";
+      open(SCDSAM,">". $self->{PATH}."/tmp/".$seq_id.".R2.sam") or die $self->{PATH}."/tmp/".$seq_id.".R2.sam";
+      
+   }
+   
+   my ($samtools) = (PARTIES::Config->get_program_path('samtools'));
+   
+   foreach my $deletion (@$deletions) {
+      next if($self->{CONSIDER_TRANS_DELETION} eq 'FALSE' and $deletion->{deletion_type} eq 'INTER_CHR');
+      my $segment_id;
+      if($deletion->{is_coherent} eq 'TRUE') {
+         $segment_id=PARTIES::Utils->generate_IES_id($self->{PREFIX},$deletion->{seq_id},$deletion->{start},$deletion->{end}); 	      
+      } else {
+         my $first_part_strand = ($deletion->{aln_type} eq 'MS') ? '+' : '-';
+         my $second_part_strand = ( ($deletion->{aln_type} eq 'MS' and $deletion->{strand}->[1] < 0) or ($deletion->{aln_type} eq 'SM' and $deletion->{strand}->[1] > 0)) ? '+' :'-';
+      
+         $segment_id=PARTIES::Utils->generate_IES_id($self->{PREFIX},$deletion->{seq_id},join('.',$deletion->{start},$first_part_strand)
+	 						,join('.',PARTIES::Utils->get_seq_id_number($deletion->{target_seq_id}),$deletion->{end},$second_part_strand));
+      }
+      
+      
+      if(!$segments{$segment_id}) {
+         $segments{$segment_id} = $deletion;
+         $segments{$segment_id}->{support_variant} = 0;
+         $segments{$segment_id}->{support_ref} = ($deletion->{is_coherent} eq 'TRUE') ? $self->_get_reference_support($sam, $deletion->{seq_id}, $deletion->{start}) : 'NA';
+      } 
+      $segments{$segment_id}->{support_variant}++;
+      push @{$segments{$segment_id}->{read_names}}, $deletion->{read_name};
+      
+      
+      if($self->{REPORT_READS} eq 'TRUE') {
+         my ($fisrt_part_sam_string,$second_part_sam_string) =qw(NA NA);
+         if($deletion->{aln_type} eq 'MDM') {
+	    my $cmd = join(" ",$samtools,'view',$self->{BAM},join("",$seq_id,':',$deletion->{aln_start},'-',$deletion->{aln_end}),' | grep',$deletion->{read_name});
+	    my $sam_line = `$cmd`;
+	    chomp $sam_line;
+	    my @sam_line = split /\t/,$sam_line;
+	    if(@sam_line and $sam_line[5] =~/^(\d+)M(\d+)D(\d+)M$/) {
+	       my ($match1,$del,$match2) = ($1,$2,$3);
+	       		
+	       my @atts = qw(AS:i:0 XN:i:0 XM:i:0 XO:i:0 XG:i:0 NM:i:0 YT:Z:UU);
+	       my $flag = ($deletion->{strand}->[0] <0) ? 0 : 16;
+	       $fisrt_part_sam_string=join("\t",$sam_line[0],$flag,$sam_line[2],$sam_line[3],$sam_line[4],$match1.'M',qw(* 0 0),substr($sam_line[9],0,$match1),substr($sam_line[10],0,$match1),@atts,'MD:Z:'.$match1);
+	       $second_part_sam_string=join("\t",$sam_line[0],$flag,$sam_line[2],$sam_line[3]+$match1,$sam_line[4],$match2.'M',qw(* 0 0),substr($sam_line[9],$match1),substr($sam_line[10],$match1),@atts,'MD:Z:'.$match2);
+	     
+	    }
+	 
+	 } else {
+            ($fisrt_part_sam_string,$second_part_sam_string) = ($deletion->{fisrt_part_sam_string},$deletion->{second_part_sam_string});
+	 }
+	 if($fisrt_part_sam_string and $fisrt_part_sam_string ne 'NA' and $second_part_sam_string and $second_part_sam_string ne 'NA') {
+            print FIRSTSAM join("\t",$fisrt_part_sam_string,'CO:Z:'.$segment_id),"\n";
+            print SCDSAM join("\t",$second_part_sam_string,'CO:Z:'.$segment_id),"\n";
+	 	 
+	 }
 
-sub _gather_partially_mapped{
-	my ($self, $sam, $seq_id, $file2locate)= @_;
-	my %reads;
-	open(SEQ, ">$file2locate") or die $file2locate;
-	my ($skipped_reads, $kept_reads, $mdm, $ms, $sm)=(0,0,0,0,0);
-	my @align=$$sam->get_features_by_location(-seq_id=>$seq_id);
-	foreach my $aln (@align){
-		my ($type, $unmatch, $match, $seq2analyse)=check_mapping($aln);
-		$skipped_reads++ if($type eq "-1");
-		next if($type eq "-1" || $unmatch < $self->{MIN_SIZE});
-		$kept_reads++;
-		my ($size, $start, $end, $seq)=(0,0,0,'NA');
-		my $rname=$aln->query->name;
-		$start=$aln->start;
-			
-		if($type eq 'MDM'){
-			$mdm++;
-			$size=$unmatch;
-			$reads{$rname}={
-				read_seq_id => $seq_id, 
-				read_name => $rname,
-				read_type => "MDM",
-				cigar => $aln->cigar_str,
-				remapped_status => "1",
-				indel_index => $match,
-				indel_index_desc => abs((length($seq2analyse)/2)-$match),
-				indel_start => $aln->start+$match-1,
-				indel_end => $aln->start+$match+$size-2,
-				indel_size => $size,
-				indel_seq => substr($aln->dna,$match, $size),
-				read_seq => $seq2analyse,
-				f_seq => substr($seq2analyse, 0, $match).'DELETION'.substr($seq2analyse, $match),
-				read_start => $aln->start,
-				read_end => $aln->end,
-				read_length => length($seq2analyse),
-				tabound => "none",
-				read_cigar => $type,
-				read_strand => $aln->strand 
-			};
-		}
-		else{
-			$reads{$rname}={
-				read_seq_id => $seq_id,		
-				read_name => $rname,
-				read_type => "UN",		
-				cigar => $aln->cigar_str,
-				remapped_status => "not_retrieved",
-				read_strand => $aln->strand,		
-				indel_start => $start-1,		
-				read_start => $start,
-				read_end => $aln->end,		
-				read_length => length($seq2analyse),
-				read_seq => $aln->query->dna,
-				unmatch => $unmatch,
-				read_cigar => $type,
-				mate_start => $aln->mate_start,
-				mate_end => $aln->mate_end,
-				tabound => "none"
-			};
-			my $seq2locate;
-			if($type eq 'MS'){
-				$ms++;
-				$seq2locate=substr($aln->query->dna, $match);
-				$reads{$rname}->{read_type}="MS";
-				$reads{$rname}->{indel_index}=$match+1;
-				$reads{$rname}->{indel_index_desc}=abs((length($seq2analyse)/2)-($match+1));
-				$reads{$rname}->{indel_start}=$start+$match;
-				$reads{$rname}->{seq2locate}=$seq2locate;
-				$reads{$rname}->{f_seq}=substr($aln->query->dna, 0, $match).'DELETION'.substr($aln->query->dna, $match);
-			}
-			elsif($type eq 'SM'){
-				$sm++;
-				$seq2locate=substr($aln->query->dna,0, $unmatch);
-				$reads{$rname}->{read_type}="SM";
-				$reads{$rname}->{indel_index}= $unmatch+1;
-				$reads{$rname}->{indel_index_desc}=abs((length($seq2analyse)/2)-($unmatch+1));
-				$reads{$rname}->{indel_end}=$start+1;#+$match;
-				$reads{$rname}->{seq2locate}=$seq2locate;
-				$reads{$rname}->{f_seq} = substr($aln->query->dna, 0, $unmatch).'DELETION'.substr($aln->query->dna, $unmatch);
-			}
-			$seq2locate=~s/(.{60})/$1\n/g;
-			print SEQ ">$rname\n$seq2locate\n";
-		}	
-	}
-	close(SEQ);
-	return %reads ;
+      }       
+      
+   }   
+   if($self->{REPORT_READS} eq 'TRUE') {
+      close(FIRSTSAM);
+      close(SCDSAM);
+      
+   }
+
+
+   return %segments;
 }
 
+sub _get_deletions {
+   my ($self,$reads,$seq,$bam_file,$target_reference_file,$stats) = @_;
+   my $seq_id = $seq->id;
+   my @deletions;
+   
+   if(-s $bam_file and $reads and scalar keys %$reads){
+      # Parsing the mapping.
+      my $bam = Bio::DB::Sam->new(-bam  =>$bam_file, -fasta=>$target_reference_file)  ;
+      my @target_ids = ($self->{CONSIDER_TRANS_DELETION} eq 'FALSE') ? ($seq_id) : $bam->seq_ids;
+      
+
+      my %remapped_reads;
+      foreach my $target_id (@target_ids) {
+         foreach my $aln ($bam->get_features_by_location(-seq_id => $target_id)){
+              my $rname=$aln->query->name;
+	      if($aln->get_tag_values("NM") != 0) {
+	         $stats->{NB_READ_REMAPPED_but_mismatch}++;
+	         next;
+	      }
+	      #next if($aln->strand != 1 and $self->{CONSIDER_TRANS_DELETION} eq 'FALSE');
+	      if($aln->cigar_str !~/^\d+M$/) {
+	         $stats->{NB_READ_REMAPPED_but_not_full_match}++;
+	         next;
+	      }
+	      
+	      # multiple mappe
+	      $reads->{$rname}->{skip} = 1 if($remapped_reads{$rname});
+	      
+	      $remapped_reads{$rname} = $aln;
+         }
+      }
+      
+      my ($samtools) = (PARTIES::Config->get_program_path('samtools'));
+      my $nb_reads_remapped = `$samtools view -F 4 $bam_file | awk '{ print \$1 }' | sort -u | wc -l`;
+      chomp $nb_reads_remapped;
+      $stats->{NB_READ_REMAPPED} = $nb_reads_remapped;
+      
+      my %mapped_sam_strings;
+      my %unmapped_sam_strings;
+      if($self->{REPORT_READS} eq 'TRUE') {   
+
+         foreach my $line (`$samtools view $bam_file`) {
+	    chomp $line;
+	    my ($rname) = split /\t/,$line;
+	    next if(!$reads->{$rname});
+	    push @{$unmapped_sam_strings{$rname}}, $line;
+	 }
+	 my $mapped_file_bam = $self->{PATH}."/tmp/mapped_$seq_id\_reads_vs_$seq_id.BOWTIE.sorted.bam"; 
+	 foreach my $line (`$samtools view $mapped_file_bam`) {
+	    chomp $line;
+	    my ($rname) = split /\t/,$line;
+	    next if(!$reads->{$rname});
+	    push @{$mapped_sam_strings{$rname}}, $line;
+	 }
+	 
+      }
+      
+      
+      
+      foreach my $rname (keys %$reads) {
+         if($reads->{$rname}->{skip}) {
+	    $stats->{NB_READ_REMAPPED_but_multiple_match}++;
+	    delete $reads->{$rname};
+	    next;
+	 }
+	 next if(!$remapped_reads{$rname} and $reads->{$rname}->{aln_type} ne 'MDM');
+	 #next if($reads->{$rname}->{aln_type} ne 'MDM');
+	 
+	 
+	 $stats->{NB_READ_CONSIDERED}++;
+	 
+	 my ($deletion_start,$deletion_end,$deletion_size,$deletion_seq,$deletion_type,$is_coherent,$is_overlapping,$ref_seq,$target_seq_id);
+	 my ($aln_start,$aln_end);
+	 my @aln_strands;
+	 my ($del_char);
+	 
+
+         
+	 
+	 # MDM
+	 ###################
+	 if($reads->{$rname}->{aln_type} eq 'MDM') {
+	    $deletion_size = $reads->{$rname}->{aln_unmatch};
+	    $deletion_start = $reads->{$rname}->{aln}->start + $reads->{$rname}->{aln_match} ;
+	    $deletion_end = $deletion_start + $deletion_size - 1; 
+	    ($aln_start,$aln_end) = ($reads->{$rname}->{aln}->start,$reads->{$rname}->{aln}->end);
+	    $deletion_seq = $reads->{$rname}->{unmapped_seq};
+	    $deletion_type = 'INTRA_CHR';
+	    $is_coherent = 'TRUE';
+	    $is_overlapping = 'FALSE';
+	    $ref_seq = $self->get_genome_sequence($seq_id,$aln_start,$aln_end);
+	    $target_seq_id = $seq_id;
+	    @aln_strands = ($reads->{$rname}->{aln}->strand,$reads->{$rname}->{aln}->strand);
+	    $del_char = '-' x $deletion_size;
+	    
+	 # MS or SM
+	 ###################
+	 } else {
+	    
+	    # check if the deletion is coherent on the same scaffold
+	    $is_coherent = is_coherent($reads->{$rname}->{aln_type},$reads->{$rname},$remapped_reads{$rname});
+        next if($is_coherent eq 'NA');
+	    next if($self->{CONSIDER_TRANS_DELETION} eq 'FALSE' and $is_coherent eq 'FALSE');
+	    $target_seq_id = $remapped_reads{$rname}->seq_id;
+
+	    if($reads->{$rname}->{aln}->start < $self->{JUNCTION_FLANK_SEQ_LENGTH} 
+	       or $remapped_reads{$rname}->start < $self->{JUNCTION_FLANK_SEQ_LENGTH}
+	       or $reads->{$rname}->{aln}->end > ($self->{LOADED_GENOME}->{$seq_id}->length - $self->{JUNCTION_FLANK_SEQ_LENGTH}) 
+	       or $remapped_reads{$rname}->end > ($self->{LOADED_GENOME}->{$target_seq_id}->length -  $self->{JUNCTION_FLANK_SEQ_LENGTH})) {
+	       $stats->{NB_READ_REMAPPED_but_close_to_borders}++;
+	       next;
+	    }
+
+	    $deletion_type = ($seq_id eq $target_seq_id) ? 'INTRA_CHR' : 'INTER_CHR';
+	    
+	    $is_overlapping = _overlap($seq_id,$reads->{$rname}->{aln}->start,$reads->{$rname}->{aln}->end,
+   				 			$target_seq_id,$remapped_reads{$rname}->start,$remapped_reads{$rname}->end );
+
+       # my @ordered_deletion_positions = sort {$a<=>$b} ($reads->{$rname}->{aln}->start,$reads->{$rname}->{aln}->end,$remapped_reads{$rname}->start,$remapped_reads{$rname}->end);
+        
+        #my $coherent_but_too_faraway = ($is_coherent eq 'TRUE' and $self->{MAX_SIZE} ne 'Inf' and ($ordered_deletion_positions[$#ordered_deletion_positions] - $ordered_deletion_positions[0]) > $self->{MAX_SIZE}) ? 'TRUE' : 'FALSE';
+        #$is_coherent = 'FALSE' if($coherent_but_too_faraway eq 'TRUE');
+        
 
 
-sub _bowtie2_mapping{
-	my ($self, $seq_id, $ref_seq, $file2locate)=@_;
-	my $file_ref=$self->{PATH}."/tmp/".$seq_id."_as_ref.fa";
-	my $file_bam = $self->{PATH}."/tmp/seq2.BT2.".$seq_id."_as_ref";
-	
-	my ($bowtie2_build,$bowtie2,$samtools) = (PARTIES::Config->get_program_path('bowtie2-build'),PARTIES::Config->get_program_path('bowtie2'),PARTIES::Config->get_program_path('samtools'));
-	if(-s $file2locate){ 
-		my $reformat_seq=$$ref_seq;
-		$reformat_seq=~s/(.{60})/$1\n/g;
-		open(REF, ">$file_ref");print REF ">$seq_id\n$reformat_seq\n";close(REF);
-		system("$bowtie2_build $file_ref $file_ref > /dev/null 2>&1");
-		system("$bowtie2 --threads 1 --end-to-end --quiet -f  --very-sensitive -k 2 -x $file_ref -U $file2locate | $samtools view -F 4 -uS - 2> /dev/null | $samtools sort - $file_bam  > /dev/null 2>&1");
-		system("$samtools index $file_bam.bam");
-	}else{ system("touch $file_bam.bam");}
+	    #  IS COHERENT
+	    if($is_coherent eq 'TRUE') {
+	       if($reads->{$rname}->{aln_type} eq 'MS') {	 
+	          ($aln_start,$aln_end) = ($reads->{$rname}->{aln}->start,$remapped_reads{$rname}->end);   
+	          $deletion_start = $reads->{$rname}->{aln}->end + 1;
+	          $deletion_end = $remapped_reads{$rname}->start - 1;
 
-	return("$file_bam.bam",$file_ref);
-}	
+	       
+	    
+	       } elsif($reads->{$rname}->{aln_type} eq 'SM') {
+	          ($aln_start,$aln_end) = ($remapped_reads{$rname}->start,$reads->{$rname}->{aln}->end);
+	          $deletion_end = $reads->{$rname}->{aln}->start - 1;
+	          $deletion_start = $remapped_reads{$rname}->end + 1;
+	       
+	       }	    
+	    
+	    
+	       $ref_seq = $self->get_genome_sequence($seq_id,$aln_start,$aln_end);
+	       $deletion_seq = $self->get_genome_sequence($seq_id,$deletion_start,$deletion_end);
+	       $deletion_size = length($deletion_seq);
+	       $del_char = '-' x $deletion_size;
+	     #die join("\n",$ref_seq,$deletion_seq) if($rname eq 'NS500446:494:HCHMCAFXY:4:11612:23002:5121');
+	   
+	    #  NOT COHERENT
+	    } else {
+	       
+	       
+	       @aln_strands = ($reads->{$rname}->{aln}->strand,$remapped_reads{$rname}->strand);
+	       my $ref_seq_first_part = $self->get_genome_sequence($seq_id,$reads->{$rname}->{aln}->start ,$reads->{$rname}->{aln}->end);
+	       my $ref_seq_second_part = $self->get_genome_sequence($target_seq_id,$remapped_reads{$rname}->start ,$remapped_reads{$rname}->end );
+	       $ref_seq_second_part = PARTIES::Utils->revcomp($ref_seq_second_part) if($remapped_reads{$rname}->strand < 0);
+	       $deletion_size = 'NA';
+	       
+	       if($reads->{$rname}->{aln_type} eq 'MS') {
+              $aln_start = $reads->{$rname}->{aln}->start;
+              $deletion_start = $reads->{$rname}->{aln}->end +1;
+		  
+              my $deletion_first_part = $self->get_genome_sequence($seq_id,$deletion_start,$deletion_start+$self->{MIN_SIZE});
+              #$deletion_first_part = PARTIES::Utils->revcomp($deletion_first_part) if($reads->{$rname}->{aln}->strand < 0);
+               
+              my ($deletion_second_part);
+              if($remapped_reads{$rname}->strand > 0) {
+                     $aln_end = $remapped_reads{$rname}->end;
+                     $deletion_end =$remapped_reads{$rname}->start - 1;
+                 $deletion_second_part = $self->get_genome_sequence($target_seq_id,$deletion_end - $self->{MIN_SIZE},$deletion_end);
+              
+              } else {
+                 $aln_end = $remapped_reads{$rname}->start;
+                     $deletion_end =$remapped_reads{$rname}->end+1;
+                     $deletion_second_part = PARTIES::Utils->revcomp($self->get_genome_sequence($target_seq_id,$deletion_end,$deletion_end+ $self->{MIN_SIZE}));
 
+              
+              }
+              $deletion_seq = join("",$deletion_first_part,'XXX',$deletion_second_part);
+              $ref_seq = join("",$ref_seq_first_part,$deletion_seq,$ref_seq_second_part);
+              $del_char = '-' x length($deletion_seq);
+              
+	       
+          } elsif($reads->{$rname}->{aln_type} eq 'SM') {
+              $aln_start = $reads->{$rname}->{aln}->end;
+              $deletion_start = $reads->{$rname}->{aln}->start -1;
+              
+              my $deletion_first_part = $self->get_genome_sequence($seq_id,$deletion_start - $self->{MIN_SIZE},$deletion_start);
+              #$deletion_first_part = PARTIES::Utils->revcomp($deletion_first_part) if($reads->{$rname}->{aln}->strand < 0);
+              
+              my ($deletion_second_part);
+              if($remapped_reads{$rname}->strand > 0) {		  
+                 $aln_end = $remapped_reads{$rname}->start;
+                     $deletion_end =$remapped_reads{$rname}->end+1;
+                     $deletion_second_part = $self->get_genome_sequence($target_seq_id,$deletion_end,$deletion_end+ $self->{MIN_SIZE});
+                 
+              
+              } else {
 
-	
-sub _reconstitute_read_structure{
-	my ($self, $reads, $mapping, $ref, $seq_id, $seq_id_seq)=@_;
+                     $aln_end = $remapped_reads{$rname}->end;
+                     $deletion_end =$remapped_reads{$rname}->start - 1;
+                 $deletion_second_part = PARTIES::Utils->revcomp($self->get_genome_sequence($target_seq_id,$deletion_end - $self->{MIN_SIZE},$deletion_end));
+              
+              }
+              $deletion_seq = join("",$deletion_second_part,'XXX',$deletion_first_part);
+              $ref_seq = join("",$ref_seq_second_part,$deletion_seq,$ref_seq_first_part);
+              $del_char = '-' x length($deletion_seq);
+	       
+	       
+	       
+	       }
+	       
 
-	if(-s $mapping){
-		# Parsing the mapping.
-		my $bam = Bio::DB::Sam->new(-bam  =>$mapping,-fasta=>$ref)  ;
-		my %remapped;
-		my @align = $bam->get_features_by_location(-seq_id => $seq_id);
-		foreach my $aln (@align){
-			my $name=$aln->query->name;
-			my $cur_read=$reads->{$name};
-			$remapped{$name}->{remapped_status}='multiple_hit' if(defined($remapped{$name}));
-			$remapped{$name}->{remapped_status}='strand_insconsistencies' if( $aln->strand != 1);
-			$remapped{$name}->{remapped_status}='mismatch' if($aln->get_tag_values("NM") != 0);
-			$remapped{$name}->{name}=$name;
-			next if(defined($remapped{$name}->{remapped_status})); 
-			$remapped{$name}->{remapped_status}='1';
-			$remapped{$name}->{remapped_strand}=$aln->strand;
-			$remapped{$name}->{remapped_start}=$aln->start;
-			$remapped{$name}->{remapped_end}=$aln->end;
-		}
-		foreach my $name (keys %remapped){
-			my $cur_read=$reads->{$name};
-			$cur_read->{remapped_status}=$remapped{$name}->{remapped_status};
-			next if($remapped{$name}->{remapped_status} ne '1');
-			$cur_read->{remapped_strand}=$remapped{$name}->{remapped_strand};
-			$cur_read->{remapped_start}=$remapped{$name}->{remapped_start};
-			$cur_read->{remapped_end}=$remapped{$name}->{remapped_end};
-			
+	       
+	    
+	    } 
+	    
+	    
+	    die $rname," ",$reads->{$rname}->{aln_type}," ",$is_coherent,"\n",$reads->{$rname}->{read_aln} if(substr($ref_seq,0,5) ne substr($reads->{$rname}->{read_aln},0,5) or substr($ref_seq,length($ref_seq)-5) ne substr($reads->{$rname}->{read_aln},length($reads->{$rname}->{read_aln})-5));
+            die if(!$ref_seq or !$deletion_seq);
+	 
 
-			#### CHECK COHERENCE WITH ORIGINALLY MAPPED READS ###;
-			my $coherent=1;
-			if($cur_read->{read_type} eq 'MS'){
-				if($cur_read->{read_strand}==1){
-					if($cur_read->{indel_start} >= $cur_read->{remapped_start} || $cur_read->{indel_start} >= $cur_read->{remapped_end}){
-						$cur_read->{remapped_status}="position_inconsistenties";						
-						$coherent=0;
-					}
-					if($cur_read->{mate_end} <= $cur_read->{remapped_start}){
-						$cur_read->{remapped_status}="mate_inconsistenties";
-						$coherent=0;
-					}
-					if($coherent==1){
-						$cur_read->{read_end}=$cur_read->{remapped_end}; # La position de fin de read devient celle du remapped
-						$cur_read->{indel_end}=$cur_read->{remapped_start}-1; # La position de fin de segment devient la position de start du remapped
-						$cur_read->{indel_seq}=substr($$seq_id_seq, $cur_read->{indel_start}-1, $cur_read->{indel_end}-$cur_read->{indel_start}+1);
-						$cur_read->{indel_size}=length($cur_read->{indel_seq});
-						$cur_read->{remapped_status}="1";
-					}
-				}
-				elsif($cur_read->{read_strand}==-1){
-					if($cur_read->{indel_start} >= $cur_read->{remapped_start} || $cur_read->{indel_start} >= $cur_read->{remapped_end}){
-						$cur_read->{remapped_status}="position_inconsistenties";						
-						$coherent=0;
-					}
-					if($coherent==1){
-						$cur_read->{read_end}=$cur_read->{remapped_end}; # La position de fin de read devient celle du remapped
-						$cur_read->{indel_end}=$cur_read->{remapped_start}-1;# La position de fin de segment devient la position de start du remapped -1
-						$cur_read->{indel_seq}=substr($$seq_id_seq, $cur_read->{indel_start}-1, $cur_read->{indel_end}-$cur_read->{indel_start}+1);
-						$cur_read->{indel_size}=length($cur_read->{indel_seq});
-						$cur_read->{remapped_status}="1";
-					}
-				}
-			}
+	 }
+	 
+	 if(length($deletion_seq)  < $self->{MIN_SIZE} or ($self->{CONSIDER_TRANS_DELETION} eq 'FALSE' and $self->{MAX_SIZE} ne 'Inf' and length($deletion_seq) > $self->{MAX_SIZE})) {
+	    $stats->{NB_READ_REMAPPED_but_too_short_or_long}++;
+	    next ;
+	 }
+	 
+	 if($is_overlapping eq 'TRUE' and $self->{CONSIDER_OVERLAPPING} eq 'FALSE') {
+	    $stats->{NB_READ_REMAPPED_but_overlapping}++;
+	    next ;
+	 
+	 }
 
-			elsif($cur_read->{read_type}  eq 'SM'){
-				if($cur_read->{read_strand}==1)	 {
-					if($cur_read->{indel_start} <= $cur_read->{remapped_start} || $cur_read->{indel_start} <= $cur_read->{remapped_end}){
-						$cur_read->{remapped_status}="position_inconsistenties";						
-						$coherent=0;
-					}
-					if($coherent==1){
-						$cur_read->{indel_end}=$cur_read->{read_start}-1; # La position de fin de segment devient la position de start du read initial
-						$cur_read->{read_start}=$cur_read->{remapped_start}; # La position de start du read est celle du remapped
-						$cur_read->{indel_start}=$cur_read->{remapped_end}+1; # la position de start du segment devient celle de la fin de remapped +1
-						$cur_read->{indel_seq}=substr($$seq_id_seq, $cur_read->{indel_start}-1, $cur_read->{indel_end}-$cur_read->{indel_start}+1);
-						$cur_read->{indel_size}=length($cur_read->{indel_seq});
-						$cur_read->{remapped_status}="1";
-					}
-				}
-				elsif($cur_read->{read_strand}==-1){
-					if($cur_read->{indel_start} <= $cur_read->{remapped_start} || $cur_read->{indel_start} <= $cur_read->{remapped_end}){
-						$cur_read->{remapped_status}="position_inconsistenties";						
-						$coherent=0;
-					}
-					if($cur_read->{mate_start} >= $cur_read->{remapped_start}){
-						$cur_read->{remapped_status}="mate_inconsistenties";
-						$coherent=0;
-					}
-					if($coherent==1){
-						$cur_read->{indel_end}=$cur_read->{read_start}-1; # La position de fin de segment devient la position de start du read initial
-						$cur_read->{read_start}=$cur_read->{remapped_start}; # La position de start du read est celle du remapped
-						$cur_read->{indel_start}=$cur_read->{remapped_end}+1; # la position de start du segment devient celle de la fin de remapped +1
-						$cur_read->{indel_seq}=substr($$seq_id_seq, $cur_read->{indel_start}-1, $cur_read->{indel_end}-$cur_read->{indel_start}+1);
-						$cur_read->{indel_size}=length($cur_read->{indel_seq});
-						$cur_read->{remapped_status}="1";
-					}
-				}
-			}
-		}
-	}
-}
+          
+	 $reads->{$rname}->{read_aln}=~s/XXX/$del_char/;
+	 
+	 #my ($shifted_read_aln,$shift_left) = $self->_shift_left($reads->{$rname}->{read_aln},$deletion_seq);
+	 
 
-sub _get_segment_from_reads{
-	my ($self, $reads, $segment, $seq_id, $current_seq) = @_;
-	foreach my $rname (keys %{$reads}){
-		next if($reads->{$rname}->{remapped_status} ne '1');
-		next if($reads->{$rname}->{indel_size} < $self->{MIN_SIZE} );
-		next if($reads->{$rname}->{indel_size} >= $self->{MAX_SIZE} );
-		my $seg_id=PARTIES::Utils->generate_IES_id($self->{PREFIX},$seq_id,$reads->{$rname}->{indel_start},$reads->{$rname}->{indel_end});
-		if(!defined($segment->{$seg_id}) || $segment->{$seg_id}->{indel_index_desc} gt $reads->{$rname}->{indel_index_desc}){
-			$segment->{$seg_id}={
-				seq_id => $seq_id,
-				id => $seg_id,
-				start => $reads->{$rname}->{indel_start},
-				end => $reads->{$rname}->{indel_end},
-				size => $reads->{$rname}->{indel_size},
-				sequence => uc($reads->{$rname}->{indel_seq}),
-				bounded_by_ta => 'FALSE', 
-				indel_index => $reads->{$rname}->{indel_index},
-				indel_index_desc => $reads->{$rname}->{indel_index_desc},
-				read_seq => $reads->{$rname}->{read_seq},
-				read_name => $rname,
-				read_start => $reads->{$rname}->{read_start},
-				read_end => $reads->{$rname}->{read_end},
-				read_length => $reads->{$rname}->{read_length},
-				cigar => $reads->{$rname}->{cigar},
-				f_seq => $reads->{$rname}->{f_seq},
-				ref_seq =>  uc(substr($$current_seq, $reads->{$rname}->{read_start}-1, $reads->{$rname}->{read_end} - $reads->{$rname}->{read_start}+1))
-			};
-			
-		} 
-		$segment->{$seg_id}->{support_variant}+=1;
-		push @{$segment->{$seg_id}->{read_names}}, $rname;
-	}
-}
-
-sub _refine_segments{
-	my ($self, $segments, $seq_id, $current_seq, $sam) = @_;
-	my $a=0;my $ndif=0;my $non_ies=0;
-	foreach my $seg_id (keys %{$segments}){
-		my $tname = $segments->{$seg_id}->{read_name};
-		my $seq = Bio::Seq->new(-seq => $segments->{$seg_id}->{read_seq}, -id => $segments->{$seg_id}->{read_name});		
-	   my $qname = $seq_id;
-		my $contigseq = $$current_seq;
-
-		my $taln=$segments->{$seg_id}->{f_seq};
-		my $qaln=$segments->{$seg_id}->{ref_seq};
-		my $del_char="-" x $segments->{$seg_id}->{size};
-		$taln=~/^(\w+)DELETION(\w+)$/;
-		my ($taln_left_flank, $taln_right_flank)=($1, $2);
-		
-		my ($mv_lft, $i)=(0,1);
-		while(substr($taln_left_flank, length($taln_left_flank)-$i,1) eq 
-				substr($segments->{$seg_id}->{sequence}, length($segments->{$seg_id}->{sequence})-$i,1)
-				&& $i<=length($taln_left_flank) ){
-				$mv_lft++;
-				$i++;
-		}
-		$taln_left_flank=~/(\w+)(\w{$mv_lft})$/;
-		$taln_left_flank=$1; my $to_move=$2;
-
-		$taln=$taln_left_flank."DELETION".$to_move.$taln_right_flank;
-		$taln=~s/DELETION/$del_char/;
-
-		my $qstart_tmp = $segments->{$seg_id}->{start};
-		my $tstart_tmp = $segments->{$seg_id}->{indel_index};
-		
-#   	if($qaln =~/N/){$self->stdlog("$seg_id\n");next;}
-   	next if($qaln =~/N/);
-		die "No seq align seq1=$taln seq2=$qaln" if(!$taln or !$qaln);
-		next if(length($taln) != length($qaln));
-		my ($mic_sam, $ctl_sam);
-		my @ies = PARTIES::Utils->get_InDel_from_aln($seq,$taln, $qname,$qaln, 0, $qstart_tmp, length($contigseq), '+',
+	 
+#	 if($reads->{$rname}->{aln_type} ne 'MDM') {
+#	 print STDERR join(" ",'>', $rname,$reads->{$rname}->{aln_type},@aln_strands),"\n";
+#	 print STDERR join(" ",$seq_id,$reads->{$rname}->{aln}->start,$reads->{$rname}->{aln}->end,$target_seq_id,$remapped_reads{$rname}->start,$remapped_reads{$rname}->end),"\n";
+#	 
+#	 print STDERR join(" ",'G',$ref_seq,$seq_id,"aln=$aln_start..$aln_end deletion_type=$deletion_type is_coherent=$is_coherent deletion=$deletion_start..$deletion_end"),"\n";
+#	 print STDERR join(" ",'R',$reads->{$rname}->{read_aln}),"\n";
+#	 #print STDERR join(" ",'R',$shifted_read_aln),"\n";
+#	 print STDERR join(" ",'D',$deletion_seq,$deletion_start,$deletion_end,$deletion_size),"\n";	
+#	 die if($is_coherent eq 'FALSE' and $seq_id eq $target_seq_id and $reads->{$rname}->{aln_type} eq 'SM' and $aln_strands[0]>0 and $aln_strands[1]>0); 
+#         }
+#
+	 #my $shift_left = $self->_shift_left($reads->{$rname}->{read_aln},$deletion_seq);
+	 #$reads->{$rname}->{read_aln} = $shifted_read_aln if($rname eq 'NS500446:494:HCHMCAFXY:4:21504:9913:2005');
+	 my ($deletion) = PARTIES::Utils->get_InDel_from_aln($seq,$reads->{$rname}->{read_aln}, $rname,$ref_seq, 0, $deletion_start, $seq->length, '+',
    						{ 
 						JUNCTION_FLANK_SEQ_LENGTH => $self->{JUNCTION_FLANK_SEQ_LENGTH},
 						ERROR_FILE_HANDLER => $self->{ERR},
 						NOT_BOUNDED_BY_TA =>   $self->{NOT_BOUNDED_BY_TA},
+						CONSIDER_TRANS_DELETION =>   $self->{CONSIDER_TRANS_DELETION},
 						CHECK_BREAK_POINTS => 0,
 						MIN_INDEL_LENGTH => $self->{MIN_SIZE},
-						MIRAA_BREAK_POINTS => ($self->{BREAK_POINTS}) ? $self->{BREAK_POINTS}->{$tname} : '',
-						SAMPLE_BAM => ($mic_sam) ? $mic_sam : 0,
-						CONTROL_BAM => ($ctl_sam) ? $ctl_sam : 0,
+						MIRAA_BREAK_POINTS => '',
+						SAMPLE_BAM => 0,
+						CONTROL_BAM =>  0,
 						MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS => 1,
-						TNAME=>$tname,
+						IS_COHERENT => $is_coherent
 						 } );
+						 
+         #print STDERR "shift=$shift_left\n";
+         
+	 if(defined($deletion) and $deletion->{POS} > $self->{JUNCTION_FLANK_SEQ_LENGTH} and $deletion->{POS} < ($seq->length - $self->{JUNCTION_FLANK_SEQ_LENGTH})){
+	 
+	    my ($mapped_sam_string,$unmapped_sam_string) = qw(NA NA);
+	    if($self->{REPORT_READS} eq 'TRUE' and $reads->{$rname}->{aln_type} ne 'MDM') {	       
+	       $unmapped_sam_string = _get_closest_sam_line($target_seq_id,$remapped_reads{$rname}->start,$unmapped_sam_strings{$rname});
+	       $mapped_sam_string = _get_closest_sam_line($seq_id,$reads->{$rname}->{aln}->start,$mapped_sam_strings{$rname});
+	    }
+	 
+	 
+	 
+	 
+	     my $shift = $reads->{$rname}->{index} - $deletion->{POS};
+             #print STDERR  $deletion->{POS}," ",$reads->{$rname}->{index}," shift=$shift\n",$deletion->{SEQ};
+	     
+	     if($is_coherent eq 'TRUE') {
+	        $deletion_start -= $shift;
+	        $deletion_end -= $shift;
+	     } else {	      
+	       $deletion_end = ($remapped_reads{$rname}->strand > 0) ? ($deletion_end - $shift) : ($deletion_end + $shift);
+	       $deletion_start = ($reads->{$rname}->{aln_type} eq 'MS') ? ($deletion_start-$shift) : ($deletion_start+$shift)
 
-		if(defined($ies[0]->{POS}) && $ies[0]->{POS} > $self->{JUNCTION_FLANK_SEQ_LENGTH} && $ies[0]->{POS} < (length($contigseq) - $self->{JUNCTION_FLANK_SEQ_LENGTH})){
-			my $shift = $tstart_tmp - $ies[0]->{POS};
-			$segments->{$seg_id}->{bounded_by_ta}= $ies[0]->{BOUNDED_BY_TA};
-			$segments->{$seg_id}->{start} = $segments->{$seg_id}->{start} - $shift;
-			$segments->{$seg_id}->{end} = $segments->{$seg_id}->{end} - $shift;
-			$segments->{$seg_id}->{sequence} = $ies[0]->{SEQ};
-			push @{$segments->{$seg_id}->{IES_found}}, @ies;
-			$segments->{$seg_id}->{junction_seq} = PARTIES::Utils->get_junction_seq($seq, $ies[0]->{POS}, $self->{JUNCTION_FLANK_SEQ_LENGTH} );
-			$segments->{$seg_id}->{id} = PARTIES::Utils->generate_IES_id($self->{PREFIX},$seq_id,$segments->{$seg_id}->{start}, $segments->{$seg_id}->{end});
-			$segments->{$seg_id}->{support_ref}=$self->_get_reference_support($sam, $seq_id, $segments->{$seg_id}->{start});		
-#			$self->_compare_segment_to_ies($seq_id, $segments->{$seg_id});
-			$segments->{$seg_id}->{tobereported}=1;
-		}
-		else{
-			$segments->{$seg_id}->{tobereported}=0;
-		}
-		
-		$a++;
-	}
 
+	     
+	     }
+	     push @deletions, {
+	 			read_name=> $rname,
+				aln_type=> $reads->{$rname}->{aln_type},
+				seq_id => $seq_id,
+				start => $deletion_start,
+				end => $deletion_end,
+				target_seq_id => $target_seq_id,
+				size => $deletion_size,
+				sequence => $deletion->{SEQ},
+				deletion_type => $deletion_type,
+				is_coherent => $is_coherent,
+				is_overlapping => $is_overlapping,
+				aln_start=>$aln_start,
+				aln_end=>$aln_end,
+				aln_read => $reads->{$rname}->{read_aln},
+				strand => \@aln_strands,
+				bounded_by_ta => $deletion->{BOUNDED_BY_TA},
+				fisrt_part_sam_string => $mapped_sam_string,
+				second_part_sam_string => $unmapped_sam_string
+	 	          };	     
+	     
+
+
+            $stats->{NB_READ_SHOWING_DELETION}++;
+	
+
+         } else {
+            $stats->{NB_READ_REMAPPED_but_close_to_borders}++;
+	 }
+	 
+      }
+   }
+   return @deletions;
+}
+
+sub _shift_left {
+   my ($self,$read_aln,$deletion_seq) = @_;
+   my $shift = 0;
+   my $i=1; 
+   
+   if($read_aln=~/^(\w+)(\-+)(\w+)$/) {
+      my ($left_part_read_aln,$gap,$right_part_read_aln) = ($1,$2,$3);
+      
+      my $max_shift = ($deletion_seq=~/XXX/) ? $self->{MIN_SIZE} : length($left_part_read_aln);   
+      my $shifted_deletion_seq = $deletion_seq;  
+      while(substr($left_part_read_aln, length($left_part_read_aln)-$i,1) eq substr($deletion_seq, length($deletion_seq)-$i,1)
+				and $i<=$max_shift 
+				) {
+	 $shift++;
+	 $i++;  
+	 $shifted_deletion_seq = substr($left_part_read_aln,length($left_part_read_aln)-$shift).substr($deletion_seq,0,length($deletion_seq)-$shift);	
+      }
+      
+      if($shift) {
+         my $seq_to_shift = substr($left_part_read_aln,length($left_part_read_aln)-$shift);
+         
+	 my $new_read_aln = join("",substr($left_part_read_aln,0,length($left_part_read_aln)-$shift),$gap,substr($left_part_read_aln,length($left_part_read_aln)-$shift),$right_part_read_aln);
+         return ($new_read_aln,$shift);
+      }
+   }  
+   return ($read_aln,$shift);
+}
+
+sub _get_closest_sam_line {
+   my ($seq_id,$pos,$sam_strings) = @_;
+   
+   my $min_dist='';
+   my $sam_string = 'NA';
+   return $sam_string if(!$sam_strings);
+   foreach my $sam_line (@{$sam_strings}) {
+      my @sl = split /\t/,$sam_line;
+      next if($sl[2] ne $seq_id);
+      if($sl[1] == 256) {
+         $sl[1]= 0;
+	 $sam_line =join("\t",@sl);
+      }
+      if($min_dist eq '' or $min_dist > abs($sl[3]-$pos)) {
+     	 $min_dist = abs($sl[3]-$pos);
+     	 $sam_string = $sam_line;
+      }
+   }
+   return $sam_string;
+}
+
+sub is_coherent {
+   my ($aln_type,$first_part,$second_aln_part) = @_;
+   
+   return 'TRUE' if($aln_type eq 'MDM');
+   
+   my $first_aln_part = $first_part->{aln};
+   
+   #my ($coherent_range_start,$coherent_range_end) = ($first_part->{coherent_range_start},$first_part->{coherent_range_end});
+   
+   #print STDERR join(" ",$first_aln_part->seq_id," eq ",$second_aln_part->seq_id," and ", $second_aln_part->start," >= ",$first_part->{coherent_range_start}," and ",$second_aln_part->end," <= ",$first_part->{coherent_range_end}),"\n";
+   my $is_in_coherent_range = ($first_aln_part->seq_id eq $second_aln_part->seq_id and $second_aln_part->start >= $first_part->{coherent_range_start} and $second_aln_part->end <= $first_part->{coherent_range_end}) ? 'TRUE' : 'FALSE';
+   
+   # impssible incoherent mapping 
+   return 'NA' if($first_part->{must_be_coherent} eq 'TRUE' and $is_in_coherent_range eq 'FALSE');
+   
+   
+   # Trans deletion
+   return 'FALSE' if($first_aln_part->seq_id ne $second_aln_part->seq_id);
+   
+   
+   # strand inconsistancy
+   return 'FALSE' if($second_aln_part->strand <0);
+   
+   
+   
+                #~ coherent_range_start=>$coherent_range_start,
+                #~ =>$coherent_range_end,
+                #~ must_be_coherent=>$must_be_coherent
+   
+   # overlap
+   #die $first_aln_part->qname if($first_aln_part->start < $second_aln_part->end and $first_aln_part->end > $second_aln_part->start );
+   return 'FALSE' if(_overlap($first_aln_part->seq_id ,$first_aln_part->start,$first_aln_part->end,
+   				 $second_aln_part->seq_id, $second_aln_part->start,$second_aln_part->end ) eq 'TRUE');
+   
+   if($aln_type eq 'MS') {
+      return 'FALSE' if($first_aln_part->end > $second_aln_part->start);
+   
+   } elsif($aln_type eq 'SM') {
+      return 'FALSE' if($first_aln_part->start < $second_aln_part->end);
+   
+   } else { die $aln_type };
+   
+   
+   
+   return $is_in_coherent_range;
+}
+
+sub _overlap {
+   my ($seq_id1,$start1,$end1, $seq_id2,$start2,$end2) = @_;
+   return 'FALSE' if($seq_id1 ne $seq_id2);
+   return 'TRUE' if($start1 <= $end2 and $end1 >= $start2 );   
+   return 'FALSE';
+}
+
+sub get_genome_sequence {
+   my ($self,$seq_id,$start,$end) =  @_;
+   return -1 if($start > $end);
+   die "$seq_id $start $end ? length=".$self->{LOADED_GENOME}->{$seq_id}->length if($start <1 or $end >$self->{LOADED_GENOME}->{$seq_id}->length);
+   return uc( $self->{LOADED_GENOME}->{$seq_id}->subseq($start,$end));
+}
+
+sub _align_reads {
+   my ($self,$reads,$seq) = @_;
+   
+   my $seq_id = $seq->id;
+   
+   my ($bowtie2_build,$bowtie2,$samtools) = (PARTIES::Config->get_program_path('bowtie2-build'),PARTIES::Config->get_program_path('bowtie2'),PARTIES::Config->get_program_path('samtools'));
+   
+   # write fasta for unmapped
+   my $nb_reads_partially_mapped=0;
+   my $fasta_file = $self->{PATH}."/tmp/".$seq_id."_tolocate.fa";
+   open(FA,">$fasta_file") or die $fasta_file;
+   foreach my $rname (keys %$reads) {
+      next if($reads->{$rname}->{aln_type} eq 'MDM');
+      print FA ">$rname\n".$reads->{$rname}->{unmapped_seq},"\n"; 
+      $nb_reads_partially_mapped++;  
+   }
+   close FA;
+   
+   
+   # mapping
+
+
+   
+
+
+   my $unmapped_file_bam = $self->{PATH}."/tmp/unmapped_$seq_id\_reads_vs_ref.BOWTIE.sorted"; 
+   
+   my $ref = $self->{GENOME};  
+   if(-s $fasta_file and $nb_reads_partially_mapped!=0){
+       
+      system("$samtools faidx $fasta_file");
+   
+       my $seq_fasta_file = $self->{PATH}."/tmp/".$seq_id."_as_ref.fa";
+       my $seqo = new Bio::SeqIO(-file=>">$seq_fasta_file",-format=>'fasta');
+       $seqo->write_seq($seq);
+       $seqo->close;
+       system("$bowtie2_build $seq_fasta_file $seq_fasta_file > /dev/null 2>&1");
+       system("$samtools faidx $seq_fasta_file");       
+       
+      
+      
+      if($self->{CONSIDER_TRANS_DELETION} eq 'FALSE') {
+         $ref = $seq_fasta_file;
+      } 
+      
+      die "ERROR bowtie2 index genome does not exist for ",$ref,"\n" if(!-e $ref.".1.bt2") ;
+      system("$bowtie2 --threads 1 --end-to-end --quiet -f  --very-sensitive -k 2 -x ".$ref." -U $fasta_file | $samtools view -F 4 -uS - 2> /dev/null | $samtools sort -o $unmapped_file_bam.bam - > /dev/null 2>&1");
+      system("$samtools index $unmapped_file_bam.bam");
+      
+      
+      if($self->{REPORT_READS} eq 'TRUE') {
+         # write fasta for mapped reads
+         $fasta_file = $self->{PATH}."/tmp/".$seq_id."_mapped.fa";
+         open(FA,">$fasta_file") or die $fasta_file;
+         foreach my $rname (keys %$reads) {
+            next if($reads->{$rname}->{aln_type} eq 'MDM');
+            print FA ">$rname\n".$reads->{$rname}->{mapped_seq},"\n";   
+         }
+         close FA;  
+         my $mapped_file_bam = $self->{PATH}."/tmp/mapped_$seq_id\_reads_vs_$seq_id.BOWTIE.sorted"; 
+      
+         system("$bowtie2 --threads 1 --end-to-end --quiet -f  --very-sensitive -k 2 -x ".$ref." -U $fasta_file | $samtools view -F 4 -uS - 2> /dev/null | $samtools sort -o $mapped_file_bam.bam - > /dev/null 2>&1");
+         system("$samtools index $mapped_file_bam.bam");
+
+      }
+      
+   } else {
+      system("touch $unmapped_file_bam.bam");
+   }
+   
+   return ("$unmapped_file_bam.bam",$ref);
 }
 
 
-sub get_min_dist{ # return the shortest distance of a TA indel to the given IES
-	my ($s1, $e1, $s2, $e2)=@_;
-	my @res = (abs($s2-$s1), abs($e2-$e1));
-	return( min(@res) );
+
+sub _get_partially_mapped {
+   my ($self,$sam,$seq_id,$stats) = @_;
+   
+   my %putative_pcr_dup;
+   my %reads;
+   foreach my $pair  ($sam->features(-type   => 'read_pair',-seq_id => $seq_id)) {
+      my ($first_mate,$second_mate) = $pair->get_SeqFeatures;
+      next if(!$first_mate or !$second_mate);
+      
+      next if($first_mate->cigar_str !~/^\d+M$/ and $second_mate->cigar_str !~/^\d+M$/);
+      next if($first_mate->seq_id ne $second_mate->seq_id);
+      
+      my $pair_uniquename = join("__",$first_mate->seq_id,$first_mate->start,$first_mate->end,$first_mate->query->dna,
+                                    $second_mate->seq_id,$second_mate->start,$second_mate->end,$second_mate->query->dna);
+       # PCR duplicates
+      next if($putative_pcr_dup{$pair_uniquename});
+      $putative_pcr_dup{$pair_uniquename}=1;
+      
+      
+      my @pos = sort {$a<=>$b} ($first_mate->start,$first_mate->end,$second_mate->start,$second_mate->end);
+      my ($insert_start,$insert_end) = ($pos[0],$pos[$#pos]);
+      
+      my $aln = ($first_mate->cigar_str =~/^\d+M$/) ? $second_mate : $first_mate;
+      
+      my $rname=$aln->query->name;
+      
+      die "Left right alignement $rname" if($first_mate->start > $second_mate->end);
+      my $read_partially_mapped = ($first_mate->cigar_str =~/^\d+M$/) ? 'RIGHT' : 'LEFT';
+   
+      my ($aln_type, $unmatch, $match) = check_mapping($aln);
+      
+      next if($aln_type eq "-1" || $unmatch < $self->{MIN_SIZE});
+      $stats->{NB_READs}++;
+      
+      # mismatches
+      next if($aln->get_tag_values('XM') > 0);
+      
+      my $read_seq = $aln->query->dna;
+      next if($read_seq=~/N/ or $aln->dna =~/N/);
+      if($reads{$rname}) {
+         delete $reads{$rname};
+         next;
+      }
+      
+      my ($mapped_seq,$unmapped_seq,$read_aln,$index); 
+      my ($coherent_range_start,$coherent_range_end,$must_be_coherent)= qw(NA NA FALSE);
+      if($aln_type eq 'MDM') {
+         $unmapped_seq = substr($aln->dna,$match, $unmatch);
+         $read_aln = substr($read_seq, 0, $match).'XXX'.substr($read_seq, $match);
+         $index = $match;
+      
+      } elsif($aln_type eq 'MS'){
+         $mapped_seq = substr($read_seq, 0, $match);
+         $unmapped_seq = substr($read_seq, $match);
+         $read_aln = $mapped_seq.'XXX'.$unmapped_seq;
+         $index = $match+1;
+         if($read_partially_mapped eq 'RIGHT') {
+             #print STDERR "# seq_id $seq_id \n" if(!$self->{LOADED_GENOME}->{$seq_id});
+             ($coherent_range_start,$coherent_range_end) = ($aln->end,$self->{LOADED_GENOME}->{$seq_id}->length);
+             
+         } else {
+             
+             ($coherent_range_start,$coherent_range_end,$must_be_coherent) = ($first_mate->start,$second_mate->end,'TRUE');
+             #print STDERR join(" " ,$first_mate->seq_id,$first_mate->start,$first_mate->end,$first_mate->cigar_str,"\n",$second_mate->seq_id,$second_mate->start,$second_mate->end,$second_mate->cigar_str),"\n";
+             #print STDERR "$rname $read_seq $read_partially_mapped $coherent_range_start,$coherent_range_end\n";
+         }
+      } elsif($aln_type eq 'SM'){
+         $unmapped_seq = substr($read_seq,0, $unmatch);
+         $mapped_seq = substr($read_seq, $unmatch);
+         $read_aln = $unmapped_seq.'XXX'.$mapped_seq;
+         $index = $unmatch+1;
+         if($read_partially_mapped eq 'LEFT') {
+             
+             ($coherent_range_start,$coherent_range_end) = (1,$aln->end);
+             
+         } else {
+             ($coherent_range_start,$coherent_range_end,$must_be_coherent) = ($first_mate->start,$second_mate->end,'TRUE');
+             #print STDERR join(" " ,$first_mate->seq_id,$first_mate->start,$first_mate->end,$first_mate->cigar_str,"\n",$second_mate->seq_id,$second_mate->start,$second_mate->end,$second_mate->cigar_str),"\n";
+             #print STDERR "$rname $read_seq $read_partially_mapped$coherent_range_start,$coherent_range_end\n";
+         }
+      }
+      #die $rname,"\n$read_seq\n".$aln->dna,"\n$unmapped_seq" if($aln->strand <0);
+      
+      $reads{$rname} = { 
+                seq_id => $seq_id,
+                read_name => $rname,
+                read_seq => $read_seq,
+                read_aln => $read_aln,
+                cigar => $aln->cigar_str,
+                aln_type => $aln_type,
+                aln_match => $match,
+                aln_unmatch => $unmatch,
+                aln_strand => $aln->strand,
+                mapped_seq => $mapped_seq,
+                unmapped_seq => $unmapped_seq,
+                index => $index,
+                aln => $aln,
+                coherent_range_start=>$coherent_range_start,
+                coherent_range_end=>$coherent_range_end,
+                must_be_coherent=>$must_be_coherent
+        };
+        $stats->{NB_READ_TO_REMAP}++;
+   }
+   return %reads ;
+
+
 }
 
 # Apply some filters on the mapping to discard reads
@@ -641,19 +1057,19 @@ sub get_min_dist{ # return the shortest distance of a TA indel to the given IES
 sub check_mapping{
 	my ($read)=@_;
 	my $cigar=$read->cigar_str;
+	
 	if($cigar =~ /^\d+M$/ ){return (-1,-1);} # Perfectly mapped read
 	if($read->query->dna =~ /N/i ){return (-1,-1);} # N-containing read
-	if($read->get_tag_values('XM') > 0 ){return (-1,-1);} # N-containing read
+	#if($read->get_tag_values('XM') > 0 ){return (-1,-1);} # Mismatch
 	if(!$read->paired || !defined($read->mate_seq_id)){ return (-1,-1);} # Unpaired read
 	if($read->seq_id ne $read->mate_seq_id){ return (-1,-1);} # Read mapped on different seq_id
 	if($read->strand == $read->mstrand){return (-1,-1);} # Strand inconsistency between pair
 	
-	if(	 $cigar =~ /^(\d+)M(\d+)S$/){			return('MS' ,$2,$1, $read->query->dna);}
-	elsif ($cigar =~ /^(\d+)S(\d+)M$/ ){		return('SM' ,$1,$2, $read->query->dna);}
-	elsif ($cigar =~ /^(\d+)M(\d+)D(\d+)M$/ ){	return('MDM',$2,$1, $read->query->dna);}
+	if(	 $cigar =~ /^(\d+)M(\d+)S$/){			return('MS' ,$2,$1);}
+	elsif ($cigar =~ /^(\d+)S(\d+)M$/ ){		return('SM' ,$1,$2);}
+	elsif ($cigar =~ /^(\d+)M(\d+)D(\d+)M$/ ){	return('MDM',$2,$1);}
 	else{ return (-1,-1);}
 }
-
 sub _get_reference_support{
 	my ($self, $sam, $seq_id, $pos)=@_;
 	my $range = 100;
@@ -671,6 +1087,10 @@ sub _get_reference_support{
 	return ($full_perfect_match);
 }
 
-	
+
+
+
+
+
 
 1;
