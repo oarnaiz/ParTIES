@@ -25,7 +25,7 @@ my %PARAMETERS = (
 				},
 			GERMLINE_BAM => {
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 1,
-				DESCRIPTION=>"Description parameter"
+				DESCRIPTION=>"Mapping file on the germline genome"
 				},
 			IES => {
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 1,
@@ -47,6 +47,10 @@ my %PARAMETERS = (
 				MANDATORY=>0, DEFAULT=> 1, TYPE=>'VALUE', RANK => 2,
 				DESCRIPTION=>"Number of mismatch allowed in a read."
 				},
+			MIN_NON_AMBIGOUS_DISTANCE => {
+				MANDATORY=>1, DEFAULT=> 4, TYPE=>'VALUE', RANK => 2,
+				DESCRIPTION=>"Minimum distance to be non ambigous mapped read"
+				},
 			SCORE_METHOD => {
 				MANDATORY=>1, DEFAULT=>"Boundaries", TYPE=>'VALUE', RANK => 2,
 				DESCRIPTION=>"This indicate how the retention score should be calculated, either for each Boundaries or for IES [Boundaries;IES]"
@@ -63,13 +67,18 @@ my %PARAMETERS = (
 				MANDATORY=>0, DEFAULT=>'TRUE', TYPE=>'BOOLEAN', RANK => 2,
 				DESCRIPTION=>"Write results in tabulated format"
 				},
+			TRACE => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
+				DESCRIPTION=>"Write read counts traces"
+				},
 
 		);
 
 
 
 my %FILE_EXTENSIONS = ( 
-			gff3 => {DESC=> 'GFF3 file', EXT => 'gff3' },		
+			gff3 => {DESC=> 'GFF3 file', EXT => 'gff3' },
+			trace => {DESC=> 'Trace file', EXT => 'trace' },		
 			 );
  
 
@@ -226,13 +235,22 @@ sub calculate {
 
    my $err_file = $self->{PATH}."/tmp/$seq_id.err";
    open(ERR,">$err_file") or die "Can not open $err_file";
+   
+   my $trace_file = $self->{PATH}."/tmp/$seq_id.trace";
+   my @TRACE_TYPEs=qw(counted LEFT RIGHT MAC too_close_to_TA mapping_not_allowed too_many_mismatchs unknown);
+   if($self->{TRACE} eq 'TRUE') {
+       open(TRACE,">$trace_file") or die "Can not open $trace_file";
+       print TRACE '#', join("\t",('ID',sort @TRACE_TYPEs)),"\n";
+   }
+      
    if(defined($self->{LOADED_IES}->{$seq_id})){
 
    	my $sam = new Bio::DB::Sam( -bam => $self->{BAM}, -fasta => $self->{GENOME}, -expand_flags => 'true');
 		my $sam_ies = new Bio::DB::Sam( -bam => $self->{GERMLINE_BAM}, -fasta => $self->{GERMLINE_GENOME}[0], , -expand_flags=> 'true' );
 		my %read_cat;
 		my $shift=0;
-		my $min_dist=4;
+		my $min_dist=$self->{MIN_NON_AMBIGOUS_DISTANCE};
+        
 		foreach my $ies (sort {$a->{start}<=>$b->{start}} @{$self->{LOADED_IES}->{$seq_id}}) {
 			my $ies_id=\$ies->{attributes}->{ID}[0];
 			my $ies_seq=\$ies->{attributes}->{sequence}[0];
@@ -243,10 +261,13 @@ sub calculate {
 
 			my ($ies_start, $ies_end) = ($self->{LOADED_GERMLINE_IES}->{$$ies_id}[0]->{start}, $self->{LOADED_GERMLINE_IES}->{$$ies_id}[0]->{end}+1);
 			my $seq_id_ies=$self->{LOADED_GERMLINE_IES}->{$$ies_id}[0]->{seq_id};
+            
 			$twd_left= $min_dist if ($twd_left<$min_dist);
 			$twd_right= $min_dist if ($twd_right<$min_dist);
 
 			$read_cat{$position}={};
+            
+            
 		# Getting mac counts
 			my ($mac, $mapping_issued, $total, $mac_read_names);
 			($mac, $mapping_issued, $total, $mac_read_names,
@@ -258,6 +279,7 @@ sub calculate {
 																{"MAC"=>1}, 
 																{"RIGHT"=>0},
 																\%{$read_cat{$position}});
+            
 
 	# Getting Left Boundaries IES+ counts
 			my ($L_ret, $L_mapping_issues, $L_total, $L_read_names);
@@ -289,8 +311,12 @@ sub calculate {
 
 			if($self->{SCORE_METHOD} eq "Boundaries"){
 				my ($L_score,$R_score)=(0,0);
+                
+                $mac=int($mac*1.2);
+                
 				$L_score=sprintf('%.4f',($L_bound_ret/($L_bound_ret+$mac))) if($L_bound_ret+$mac != 0);
 				$R_score=sprintf('%.4f',($R_bound_ret/($R_bound_ret+$mac))) if($R_bound_ret+$mac != 0);
+                print STDERR join(" ",$ies_id,$L_bound_ret,$mac,"=>",$L_score),"\n" if($ies_id eq 'MICA.94.34459');
 				$ies->{attributes}->{support_mac}[0]=$mac;
 				$ies->{attributes}->{support_left}[0]=$L_bound_ret;
 				$ies->{attributes}->{support_right}[0]=$R_bound_ret;
@@ -307,12 +333,65 @@ sub calculate {
 				$ies->{attributes}->{total_counts}[0]=$L_total+$R_total;
 			}
 			push @{$results{$self->get_mode()}->{$seq_id}},$ies;
+            
+            if($self->{TRACE} eq 'TRUE' ) {
+                my %traces ;
+                foreach my $status (@TRACE_TYPEs) { $traces{$status}=0; }
+                
+                foreach my $rname (keys %{$read_cat{$position}}) {
+                    my $status = 'unknown';
+                    if($read_cat{$position}->{$rname}->{MAC} eq 'MAC' or $read_cat{$position}->{$rname}->{LEFT} eq 'MIC' or $read_cat{$position}->{$rname}->{RIGHT} eq 'MIC') {
+                        
+                        if($read_cat{$position}->{$rname}->{MAC} eq 'MAC') {
+                            $traces{MAC}++;
+                        } elsif($read_cat{$position}->{$rname}->{LEFT} eq 'MIC') {
+                            $traces{LEFT}++;
+                        } elsif($read_cat{$position}->{$rname}->{RIGHT} eq 'MIC') {
+                            $traces{RIGHT}++;
+                        }
+                        
+                        
+                        $status='counted' ;
+                    }
+                    
+                    
+                    if($status eq 'unknown') {
+                        #~ foreach my $step (keys %{$read_cat{$position}->{$rname}}) {
+                            #~ print STDERR $rname," ",$step," ",$read_cat{$position}->{$rname}->{$step},"\n";
+                        #~ }
+                        if($read_cat{$position}->{$rname}->{MAC} ne 'ns') {
+                            $status=$read_cat{$position}->{$rname}->{MAC};
+                        } 
+                        if($status eq 'unknown' and  $read_cat{$position}->{$rname}->{LEFT} ne 'ns') {
+                            $status=$read_cat{$position}->{$rname}->{LEFT};
+                        }
+                        if($status eq 'unknown' and  $read_cat{$position}->{$rname}->{RIGHT} ne 'ns') {
+                            $status=$read_cat{$position}->{$rname}->{RIGHT};
+                        }
+                        
+                    }
+                    die $status if($traces{$status} eq '');
+                    $traces{$status}++;
+                    #print STDERR "STATUS = $status\n";
+                }
+                #print STDERR "\n";
+                my @trace_line= ($$ies_id);
+                foreach my $status (sort @TRACE_TYPEs) {
+                    push @trace_line,$traces{$status};
+                }
+                
+                
+                print TRACE join("\t",@trace_line),"\n";
+            }
+            
+            
 		}
 		
    }
    print LOG "END calculation for $seq_id\n";
    close LOG;
    close ERR;
+   close TRACE if($self->{TRACE} eq 'TRUE');
    return %results;
 }
 
@@ -361,7 +440,7 @@ sub finish {
 	my $gff_file = $self->{PATH}."/".uc($self->get_mode).".gff3";
   	open(GFF,">$gff_file") or die "Can not open $gff_file";   
 	print GFF "##gff-version 3\n# ",join(" ",$self->_command_line),"\n";
-
+    
 	foreach my $seq_id (keys %{$results}){
 	
 	   next if(!$results->{$seq_id});
@@ -379,23 +458,29 @@ sub finish {
 	}
 	close GFF;
 	
-       if($self->{TAB} eq 'TRUE') {
-          $self->stderr("Write tab file ...\n" );
-          my $gff2tab=$self->{BIN}.'/utils/gff2tab.pl';
-   
-          foreach my $key (keys %FILE_EXTENSIONS) {
-             my $fext = ($FILE_EXTENSIONS{$key}->{EXT}) ? $FILE_EXTENSIONS{$key}->{EXT} : $key;
-             next if($fext!~/gff3$/);
-             my $gff_file = $self->{PATH}."/".$self->get_mode.'.'.$fext;
-             my $tab_file = $gff_file ;
-             $tab_file=~s/\.gff3$/\.tab/;
-             system("$gff2tab -gff $gff_file > $tab_file");
-          }
-       } 	
-	
-	
-	
-	
+       
+    my $gff2tab=$self->{BIN}.'/utils/gff2tab.pl';
+    my $base = $self->get_mode;
+    foreach my $key (keys %FILE_EXTENSIONS) {
+        my $ext = ($FILE_EXTENSIONS{$key}->{EXT}) ? $FILE_EXTENSIONS{$key}->{EXT} : $key;
+        next if(!$ext);
+        
+        if($self->{TRACE} eq 'TRUE' and $ext eq 'trace') {
+            $self->stderr("Write file : $self->{PATH}/$base.$ext\n");
+            system("cat $self->{PATH}/tmp/*.$key 2> /dev/null | grep '^#' | head -1  > $self->{PATH}/$base.$ext");
+            system("echo \"\$(echo '##gff-version 3' | cat - $self->{PATH}/$base.$ext)\" > $self->{PATH}/$base.$ext") if($ext=~/gff3$/);
+            system("cat $self->{PATH}/tmp/*.$key 2> /dev/null | grep -v '^#' >> $self->{PATH}/$base.$ext");     
+        }
+        if($self->{TAB} eq 'TRUE' and $ext=~/gff3$/) {
+            $self->stderr("Write file : $self->{PATH}/$base.$ext\n");
+            my $gff_file = $self->{PATH}."/".$base.'.'.$ext;
+            my $tab_file = $gff_file ;
+            $tab_file=~s/\.gff3$/\.tab/;
+            system("$gff2tab -gff $gff_file > $tab_file");
+            
+        }
+    }
+    
 	$self->remove_temporary_files;
 
 }
@@ -444,7 +529,6 @@ sub _get_counts {
 	my ($mac, $nw_mapped, $total)=(0,0,0);
 	my %read_names; 
 
-
 	my %read_cat=%{$hash_reads};	# Read debugging
 	my $step;
 	$step="MAC" if(defined($mac_reads->{"MAC"}));
@@ -460,7 +544,10 @@ sub _get_counts {
 
 # Filtering if the current read has been flag as Mac read
 		if(defined($mac_reads->{$rname}) && $mac_reads->{$rname}==$aln->get_tag_values('FIRST_MATE')){ 
-			$read_cat{$rname}->{$step}="flagged_as_mac"; $total--; next;}
+			$read_cat{$rname}->{$step}="flagged_as_mac"; 
+            $total--; 
+            next;
+        }
 
 # If RNAseq option is set : transform all \dM\dN\dM reads into \M reads.
 		if($TOPHAT_MAPPING && $rcigar=~/(\d+)M(\d+)N(\d+)M/){
@@ -478,28 +565,38 @@ sub _get_counts {
 
 # Filtering on alignement profil (cigar), positions of the read compare to the TA
 		if (_allowed_cigar($rcigar)==0){ 
-			$read_cat{$rname}->{$step}="mapping_not_allowed";next;}
+			$read_cat{$rname}->{$step}="mapping_not_allowed";
+            next;
+        }
 		if($rstart >= $position - $min_left_dist){ 
-			$read_cat{$rname}->{$step}="too_close_to_TA";next;}
+			$read_cat{$rname}->{$step}="too_close_to_TA";
+            next;
+        }
 		if($rend <= $position+1 + $min_right_dist){ 
-			$read_cat{$rname}->{$step}="too_close_to_TA"; next;}
+			$read_cat{$rname}->{$step}="too_close_to_TA"; 
+            next;
+        }
 
 
 # Filtering using the MD tag indicating where are the differences between read and reference
 # Conting the number of differences, exluding those reported in the SNP file.
 		my $mismatchs_found=_mismatch_count($self,\$aln);
 		if($mismatchs_found > $$self->{'MAX_MISMATCH'}){ 
-			$read_cat{$rname}->{$step}="too_many_mismatchs"; next;}
+			$read_cat{$rname}->{$step}="too_many_mismatchs";
+            next;
+        }
 	
 
 	# Recording read name
 		if($step eq "MAC"){
-			$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
+			$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');
+            $mac++;
 			$read_cat{$rname}->{$step}="MAC";
 		}
 		elsif($step eq "LEFT"){
 			if(!defined($mac_reads->{$rname})){
-				$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');$mac++;
+				$read_names{$rname}=$aln->get_tag_values('FIRST_MATE');
+                $mac++;
 				$read_cat{$rname}->{$step}="MIC";
 			}
 		}
