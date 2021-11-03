@@ -19,6 +19,7 @@ use PARTIES::Run;
 use PARTIES::MIRET;
 use PARTIES::MILORD;
 use PARTIES::Compare;
+use PARTIES::Concatemer;
 use PARTIES::Utils;
 
 
@@ -44,6 +45,7 @@ sub get_parties_modes {
 		MIRET 		=> { N=> 6, DESC=>'Method of Ies RETention'},
 		MILORD 		=> { N=> 7, DESC=>'Method of Identification and Localization of Rare Deletion'},
 		Compare 	=> { N=> 8, DESC=>'Compare IES/InDel datasets'},
+		Concatemer 	    => { N=> 9, DESC=>'IES Concatemer detection'},
                );
    return %modes;
 } 
@@ -73,7 +75,8 @@ sub get_program_path {
 			samtools => '',
 			RepeatMasker => '',
 			blat => '',
-			muscle => ''
+			muscle => '',
+			bwa => ''
 			);
   
   
