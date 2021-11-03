@@ -605,31 +605,35 @@ sub _find_ies_in_segment {
    close TMP;
    die "No seq\n$qname and $tname" if(!$ftseq or !$qseq);
    system(PARTIES::Config->get_program_path('muscle')." -in $tmp_fname.fa -out $tmp_fname.aln -quiet -maxiters 1 -diags");
-   #print STDERR "muscle -in $tmp_fname.fa -out $tmp_fname.aln -quiet -maxiters 1 -diags -clwstrict\n";
-   #system("muscle -in $tmp_fname.fa -out $tmp_fname.aln -quiet -maxiters 1 -diags -clwstrict");
-   open(ALN,"$tmp_fname.aln") or die "No file $tmp_fname.aln";
-   my %aln;
-   my $nb_aln=0;
-   while(<ALN>) {
-   	chomp;
-   	next if(!$_);
-   	if($_=~/^>/) {
-   	   $nb_aln++;
-   	} else {
-   	   $aln{$nb_aln}.=$_;
-   	}
-   }
-   close ALN;
-   my $taln = $aln{1};
-   my $qaln = $aln{2};     
-   die "No seq align seq1=$taln seq2=$qaln in $tmp_fname.aln " if(!$taln or !$qaln);
    unlink "$tmp_fname.fa";
-   unlink "$tmp_fname.aln";
+   
+   my @ies;
+   if(-e "$tmp_fname.aln") {    
+   
+   	#print STDERR "muscle -in $tmp_fname.fa -out $tmp_fname.aln -quiet -maxiters 1 -diags -clwstrict\n";
+   	#system("muscle -in $tmp_fname.fa -out $tmp_fname.aln -quiet -maxiters 1 -diags -clwstrict");
+   	open(ALN,"$tmp_fname.aln") or die "No file $tmp_fname.aln";
+   	my %aln;
+   	my $nb_aln=0;
+   	while(<ALN>) {
+   		chomp;
+   		next if(!$_);
+   		if($_=~/^>/) {
+   		   $nb_aln++;
+   		} else {
+   		   $aln{$nb_aln}.=$_;
+   		}
+   	}
+   	close ALN;
+   	my $taln = $aln{1};
+   	my $qaln = $aln{2};     
+   	die "No seq align seq1=$taln seq2=$qaln in $tmp_fname.aln " if(!$taln or !$qaln);
+
 
    
 
-   # common procedure to find ies/indel in an alignment
-   my @ies = PARTIES::Utils->get_InDel_from_aln($seq,$taln, $qname,$qaln, $tstart_tmp, $qstart_tmp, length($contigseq), $strand,
+   	# common procedure to find ies/indel in an alignment
+   	@ies = PARTIES::Utils->get_InDel_from_aln($seq,$taln, $qname,$qaln, $tstart_tmp, $qstart_tmp, length($contigseq), $strand,
    						{ 
 						JUNCTION_FLANK_SEQ_LENGTH => $self->{JUNCTION_FLANK_SEQ_LENGTH},
 						ERROR_FILE_HANDLER => $fh_err,
@@ -641,6 +645,10 @@ sub _find_ies_in_segment {
 						CONTROL_BAM => ($ctl_sam) ? $ctl_sam : 0,
 						MIN_READS_SUPPORTING_MAC_INDEL_JUNCTIONS => 1,
 						 } );
+   } else {
+   	$self->stderr("Warning no file $tmp_fname.aln\n" );
+   }
+   unlink "$tmp_fname.aln";
    return @ies;
 
 }   
