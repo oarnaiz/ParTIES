@@ -3,7 +3,7 @@ use strict;
 use FindBin qw($Bin);
 use lib "$Bin/lib/";
 
-my $VERSION = 1.02;
+my $VERSION = 1.05;
 
 use Getopt::Long;
 use Parallel::ForkManager;
@@ -23,8 +23,9 @@ use PARTIES::Config;
 =cut
 
 # COMMON PARAMTERS
-my ($SEQ_ID,$CONFIG,$AUTO,$GENOME,$OUT_DIR,$BAM,$PREFIX,$VERBOSE,$KEEP_TMP,$QUIET,$FORCE,$CHECK_CONFIG,$HELP);
+my ($SEQ_ID,$LIST_OF_SEQs,$CONFIG,$AUTO,$GENOME,$OUT_DIR,$BAM,$PREFIX,$VERBOSE,$KEEP_TMP,$QUIET,$FORCE,$CHECK_CONFIG,$HELP);
 my $THREADS=6;
+my $MIN_SEQ_LENGTH=0;
 
 # MIRAA PARAMETERS
 my ($MAX_INSERT_SIZE,$MIN_BREAK_COVERAGE,$MAX_MISMATCH,$MIN_MATCH_LENGTH,$MIN_DIST_FROM_EXTREMITIES,$MIN_DIST_BETWEEN_BP);
@@ -42,14 +43,16 @@ my ($SKIP_VELVET_ASSEMBLY,$NO_ZIP,@KMER);
 my ($FASTQ1,$FASTQ2,$INSERT_SIZE,$MAX_COVERAGE,$MIN_COVERAGE,$MIN_CONTIG_LENGTH,$SKIP_REPEAT_MASKER,$SEQUENCES_PER_BLAT_BATCH);
 
 # MIRET PARAMETERS
-my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE, $TOPHAT);
+my ($CHR_COR, $SNPFILE,  $GERMLINE_BAM, $SCORE_METHOD, $CONTROL, $GERMLINE_IES_FILE, $TOPHAT, $MIN_NON_AMBIGOUS_DISTANCE, $TRACE);
 
 # MILORD PARAMETERS
-my ($MIN_SIZE, $MAX_SIZE, $REPORT_READ_NAMES);
+my ($MIN_SIZE, $MAX_SIZE, $CONSIDER_TRANS_DELETION,$CONSIDER_OVERLAPPING,$REPORT_READS);
 
 # Compare PARAMETERS
 my ($REFERENCE_SET_FILE, $CURRENT_SET_FILE,$MAX_DIST,$TAB);
 
+# Concatemer PARAMETERS
+my ($MIN_MAPPING_QUALITY,$NO_REMOVE_PCR_DUP);
 
 # Map PARAMETERS
 my ($INDEX_GENOME,$USE_INSERT_REFERENCE);
@@ -67,6 +70,8 @@ my $MODE = shift;
 #Reads options from command line
 GetOptions(  
 	    '-seq_id=s' => \$SEQ_ID,
+	    '-min_seq_length=i' => \$MIN_SEQ_LENGTH,
+	    '-list_of_seq=s' => \$LIST_OF_SEQs,
 	    '-config=s' => \$CONFIG,
 	    '-auto' => \$AUTO,
 	    '-check_config' => \$CHECK_CONFIG,
@@ -84,6 +89,7 @@ GetOptions(
 	    '-bam=s' => \$BAM,
 	    '-prefix=s' => \$PREFIX,
 	    '-max_coverage=s' => \$MAX_COVERAGE,
+	    '-min_match_length=i' => \$MIN_MATCH_LENGTH,
 	     	    
 	
 	# Map options    
@@ -93,7 +99,6 @@ GetOptions(
 	
 	# MIRAA options    
 	    '-max_insert_size=i' => \$MAX_INSERT_SIZE,
-	    '-min_match_length=i' => \$MIN_MATCH_LENGTH,
             '-max_mismatch=i' => \$MAX_MISMATCH,
 	    '-min_dist_between_bp=i' => \$MIN_DIST_BETWEEN_BP,
             '-min_dist_from_extremities=i' => \$MIN_DIST_FROM_EXTREMITIES,
@@ -131,23 +136,31 @@ GetOptions(
 	    '-germline_bam=s' => \$GERMLINE_BAM,
 	    '-score_method=s' => \$SCORE_METHOD,
 	    '-control=s' => \$CONTROL,
+	    '-min_non_ambigous_distance=i' => \$MIN_NON_AMBIGOUS_DISTANCE,
 	    '-tophat' => \$TOPHAT,
-
+	    '-trace' => \$TRACE,
+        
 	# MILORD options
 	    '-min_size=s' => \$MIN_SIZE,
 	    '-max_size=s' => \$MAX_SIZE,
-	    '-report_read_names' => \$REPORT_READ_NAMES,
+	    '-report_reads' => \$REPORT_READS,
+	    '-consider_trans_deletion' => \$CONSIDER_TRANS_DELETION,
+	    '-consider_overlapping' => \$CONSIDER_OVERLAPPING,
 	
 	# Compare options    
 	    '-reference_set=s' => \$REFERENCE_SET_FILE,
 	    '-current_set=s' => \$CURRENT_SET_FILE,
 	    '-max_dist=i' => \$MAX_DIST,
 	    '-tab' => \$TAB,	        
+    # Concatemer options    
+	    '-min_mapping_quality=i' => \$MIN_MAPPING_QUALITY,
+	    '-no_remove_pcr_duplicates' => \$NO_REMOVE_PCR_DUP,
 	   );
 
 
 
 die usage() if(!$MODE or !$MODES{$MODE});
+
 
 #############################################
 # MAIN
@@ -155,16 +168,19 @@ die usage() if(!$MODE or !$MODES{$MODE});
 
 
 my $PACKAGE = 'PARTIES::'.$MODE;
-my $factory = $PACKAGE->new({	    
+my $factory = $PACKAGE->new({	   
+                -version => $VERSION,
 				# common options
-	    			-config => $CONFIG,
-	    			-auto => $AUTO ? 'TRUE' : 'FALSE',
+                -config => $CONFIG,
+                -auto => $AUTO ? 'TRUE' : 'FALSE',
 				-genome => $GENOME,
 				-out_dir => $OUT_DIR,
 				-bam => $BAM,
 				-keep_tmp => $KEEP_TMP ? 'TRUE' : 'FALSE',	
 				-force => $FORCE ? 'TRUE' : 'FALSE',
 				-seq_id => $SEQ_ID,
+				-list_of_seq => $LIST_OF_SEQs,
+				-min_seq_length => $MIN_SEQ_LENGTH,
 				-threads => $THREADS,	
 				-verbose=>$VERBOSE ? 'TRUE' : 'FALSE',	
 				-quiet=>$QUIET ? 'TRUE' : 'FALSE',
@@ -217,18 +233,26 @@ my $factory = $PACKAGE->new({
 			        -germline_bam => $GERMLINE_BAM,
 			        -score_method => $SCORE_METHOD,
 			        -control => $CONTROL,
+			        -min_non_ambigous_distance => $MIN_NON_AMBIGOUS_DISTANCE,
 				-tophat => $TOPHAT ? 'TRUE' : 'FALSE',
+				-trace => $TRACE ? 'TRUE' : 'FALSE',
 
 				# MILORD options
 				-min_size => $MIN_SIZE,
 				-max_size => $MAX_SIZE,
-				-report_read_names => $REPORT_READ_NAMES ? 'TRUE' : 'FALSE',
+				-report_reads => $REPORT_READS ? 'TRUE' : 'FALSE',
+				-consider_trans_deletion => $CONSIDER_TRANS_DELETION ? 'TRUE' : 'FALSE',
+				-consider_overlapping => $CONSIDER_OVERLAPPING ? 'TRUE' : 'FALSE',
 				
 				# Compare options
 				-reference_set => $REFERENCE_SET_FILE,
 				-current_set => $CURRENT_SET_FILE,
 				-max_dist => $MAX_DIST,
 				-tab => $TAB ? 'TRUE' : 'FALSE',	
+                
+				# Concatemer options    
+				-min_mapping_quality => $MIN_MAPPING_QUALITY,
+				-no_remove_pcr_duplicates => $NO_REMOVE_PCR_DUP ? 'TRUE' : 'FALSE',
 				});
 
 # Check we have all parameters
@@ -262,14 +286,36 @@ $pm -> run_on_finish (
 );
 
 
+my %SEQ_IDs;
+my $NB_SEQ;
+if($LIST_OF_SEQs and -e $LIST_OF_SEQs) {
+    
+    foreach my $seq_id (`awk '{ print \$1 }' $LIST_OF_SEQs`) {
+        chomp $seq_id;
+        $SEQ_IDs{$seq_id}=1;
+    }
+    $NB_SEQ=scalar keys %SEQ_IDs;
+} else {
+
+    my $nb_seq_cmd = "grep -c '>' ".$factory->{GENOME};
+    $NB_SEQ=`$nb_seq_cmd`;
+    chomp $NB_SEQ;
+}
+
+$factory->stderr("Calculating on ".$factory->{GENOME}."... $NB_SEQ sequences\n") if($VERBOSE);
 
 
 my $seqio = new Bio::SeqIO(-file=> $factory->{GENOME},-format=>'Fasta');
 
+my $N=0;
 while(my $seq = $seqio->next_seq) {
    my $seq_id = $seq->id;
    next if($SEQ_ID and $seq_id ne $SEQ_ID );
+   next if($LIST_OF_SEQs and !$SEQ_IDs{$seq_id} );
    # Forks and returns the pid for the child:
+   $N++;
+   print STDERR "$N / $NB_SEQ sequences\n" if($VERBOSE) ;
+   next if($seq->length < $MIN_SEQ_LENGTH);
    
    my $pid = $pm->start and next; 
    my %results = $factory->calculate($seq);
@@ -278,6 +324,7 @@ while(my $seq = $seqio->next_seq) {
    $pm->finish(0,\%results);
 
 }
+$factory->stderr("Waiting end of job(s) ...\n") if($VERBOSE);
 
 $pm->wait_all_children;  
 
