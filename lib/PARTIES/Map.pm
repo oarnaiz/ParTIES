@@ -162,10 +162,10 @@ sub finish {
   my ($bowtie2,$samtools) = (PARTIES::Config->get_program_path('bowtie2'),PARTIES::Config->get_program_path('samtools'));
       
   $self->stderr("Mapping on ".basename($self->{GENOME})." ... \n" );
-  my $out_bam = $self->{PATH}."/".basename($self->{OUT_DIR}).".".basename($self->{GENOME}).".BOWTIE.sorted";
+  my $out_bam = $self->{PATH}."/".basename($self->{OUT_DIR}).".".basename($self->{GENOME}).".BOWTIE.sorted.bam";
   $self->stdlog("$bowtie2 --threads $self->{THREADS} --local -x $self->{BT2_INDEX} -1 $self->{FASTQ1} -2 $self->{FASTQ2} -X $self->{MAX_INSERT_SIZE}\n");
-  system("$bowtie2 --threads $self->{THREADS}  --quiet --local -x $self->{BT2_INDEX} -1 $self->{FASTQ1} -2 $self->{FASTQ2} -X $self->{MAX_INSERT_SIZE} | $samtools view -uS - | $samtools sort - $out_bam > /dev/null 2>&1");
-  system("$samtools index $out_bam.bam");
+  system("$bowtie2 --threads $self->{THREADS}  --quiet --local -x $self->{BT2_INDEX} -1 $self->{FASTQ1} -2 $self->{FASTQ2} -X $self->{MAX_INSERT_SIZE} | $samtools view -uS - | $samtools sort -o $out_bam - > /dev/null 2>&1");
+  system("$samtools index $out_bam");
   $self->stderr("Done\n" );
   
    
