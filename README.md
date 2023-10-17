@@ -82,17 +82,19 @@ You can also run each step independently, specifying the intermediate result fil
 
 The map module will align the reads on the reference.
 ```bash
+FASTQ1=example/Example_reads_1.fastq
+FASTQ2=example/Example_reads_2.fastq
 OUT=Test2
 parties Map -genome example/scaffold51_1.fa -out_dir $OUT \
- -fastq1 example/Example_reads_1.fastq -fastq2 example/Example_reads_2.fastq \
- -max_insert_size 500 -index_genome -threads 4 
+ -fastq1 $FASTQ1 -fastq2 $FASTQ2 \
+ -max_insert_size 500 -index_genome -threads 4  -v
 ```
 
 The MIRAA module searches for breakpoints in an alignment file.
 ```bash
 parties MIRAA -genome example/scaffold51_1.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
- -min_break_coverage 5 -threads 4 
+ -min_break_coverage 5 -threads 4  -v
 ```
 
 The Assembly module filters sequencing reads and assemble them into contigs. Three different assemblies are created.
@@ -100,8 +102,8 @@ The Assembly module filters sequencing reads and assemble them into contigs. Thr
 parties Assembly -genome example/scaffold51_1.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
  -miraa $OUT/MIRAA/MIRAA.gff3 \
- -fastq1 example/Example_reads_1.fastq -fastq2 example/Example_reads_2.fastq \
- -insert_size 300 -kmer 51 -threads 4 
+ -fastq1 $FASTQ1 -fastq2 $FASTQ2 \
+ -insert_size 300 -kmer 51 -threads 4  -v
 ```
 
 The MICA module computes comparisons between genomes, looking for insertions in germline genomes.
@@ -112,7 +114,7 @@ parties MICA -genome example/scaffold51_1.fa -out_dir $OUT \
  -germline_genome $OUT/Assembly/VELVET_51_at_least_one_no_match/VELVET_51_at_least_one_no_match_contigs.fa \
  -germline_genome $OUT/Assembly/VELVET_51_no_filter/VELVET_51_no_filter_contigs.fa \
  -germline_genome $OUT/Assembly/VELVET_51_no_mac_junctions/VELVET_51_no_mac_junctions_contigs.fa \
- -insert_size 300 -threads 4 
+ -insert_size 300 -threads 4  -v
 ```
 
 
@@ -120,14 +122,14 @@ The Insert module creates an IES containing reference
 ```bash
 parties Insert -genome example/scaffold51_1.fa -out_dir $OUT \
  -ies $OUT/MICA/MICA.gff3 -suffix _with_IES \
- -threads 4 
+ -threads 4 -v 
 ```
 
 We use the Map module once again to align the reads on the IES containing reference.
 ```bash
 parties Map -genome $OUT/Insert/Insert.fa -out_dir $OUT \
- -fastq1 example/Example_reads_1.fastq -fastq2 example/Example_reads_2.fastq \
- -max_insert_size 500 -index_genome -threads 4 -force
+ -fastq1 $FASTQ1 -fastq2 $FASTQ2 \
+ -max_insert_size 500 -index_genome -threads 4 -v -force
 ```
 
 The MIRET module calculates precisely the level of retention of each IES in a sample.
@@ -138,7 +140,7 @@ parties MIRET -genome example/scaffold51_1.fa -out_dir $OUT \
  -germline_bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
  -ies $OUT/MICA/MICA.gff3 \
  -germline_ies $OUT/Insert/Insert.gff3 \
- -score_method Boundaries -threads 4 
+ -score_method Boundaries -threads 4 -v
 ```
 
 The MILORD module searches for rare deletions in sequencing reads compared to a reference.
@@ -148,7 +150,7 @@ When run on a germline genome, we do expect to see deletions that correspond to 
 parties MILORD -genome $OUT/Insert/Insert.fa -out_dir $OUT \
  -bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
  -ies $OUT/Insert/Insert.gff3 \
- -threads 4 
+ -threads 4 -v  
 ```
 
 The Compare module allows coordinate-based comparisons between elements (MICA and/or MILORD results)
@@ -156,6 +158,29 @@ The Compare module allows coordinate-based comparisons between elements (MICA an
 parties Compare -genome $OUT/Insert/Insert.fa -out_dir $OUT \
  -reference_set $OUT/Insert/Insert.gff3 \
  -current_set $OUT/MILORD/MILORD.gff3 \
- -threads 4 
+ -threads 4 -v 
 ```
 
+
+The Concatemere module searches for contamerized excision products : contamerized IESs or single-IES circles.
+```bash
+parties Concatemer -genome $OUT/Insert/Insert.fa -out_dir $OUT \
+ -seq_id null -fastq1 $FASTQ1 -fastq2 $FASTQ2 \
+ -ies $OUT/MICA/MICA.gff3 \
+ -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam \
+ -germline_bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
+ -threads 4 -v
+```
+
+The MEND module analyze in more detail DNA reads overlapping TA dinculeotide excision sites.
+```bash
+parties MEND -out_dir $OUT \
+ -bam $OUT/Map/$OUT.scaffold51_1.fa.BOWTIE.sorted.bam  \
+ -genome example/scaffold51_1.fa \
+ -germline_bam $OUT/Map/$OUT.Insert.fa.BOWTIE.sorted.bam \
+ -germline_genome $OUT/Insert/Insert.fa \
+ -germline_ies $OUT/Insert/Insert.gff3 \
+ -ies $OUT/MICA/MICA.gff3 \
+ -excision_errors $OUT/Compare/Compare.current.gff3 \
+ -threads 4 -v 
+```
