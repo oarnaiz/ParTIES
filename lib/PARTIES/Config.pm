@@ -20,6 +20,7 @@ use PARTIES::MIRET;
 use PARTIES::MILORD;
 use PARTIES::Compare;
 use PARTIES::Concatemer;
+use PARTIES::MEND;
 use PARTIES::Utils;
 
 
@@ -46,6 +47,7 @@ sub get_parties_modes {
 		MILORD 		=> { N=> 7, DESC=>'Method of Identification and Localization of Rare Deletion'},
 		Compare 	=> { N=> 8, DESC=>'Compare IES/InDel datasets'},
 		Concatemer 	    => { N=> 9, DESC=>'IES Concatemer detection'},
+		MEND 	    => { N=> 10, DESC=>'Method for END analysis '},
                );
    return %modes;
 } 
