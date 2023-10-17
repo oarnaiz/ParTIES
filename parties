@@ -3,7 +3,7 @@ use strict;
 use FindBin qw($Bin);
 use lib "$Bin/lib/";
 
-my $VERSION = 1.05;
+my $VERSION = 1.06;
 
 use Getopt::Long;
 use Parallel::ForkManager;
@@ -53,6 +53,9 @@ my ($REFERENCE_SET_FILE, $CURRENT_SET_FILE,$MAX_DIST,$TAB);
 
 # Concatemer PARAMETERS
 my ($MIN_MAPPING_QUALITY,$NO_REMOVE_PCR_DUP);
+
+# MEND PARAMETERS
+my ($EXCISION_ERROR_FILE);
 
 # Map PARAMETERS
 my ($INDEX_GENOME,$USE_INSERT_REFERENCE);
@@ -155,6 +158,8 @@ GetOptions(
     # Concatemer options    
 	    '-min_mapping_quality=i' => \$MIN_MAPPING_QUALITY,
 	    '-no_remove_pcr_duplicates' => \$NO_REMOVE_PCR_DUP,
+    # MEND options    
+	    '-excision_errors=s' => \$EXCISION_ERROR_FILE,  
 	   );
 
 
@@ -170,89 +175,92 @@ die usage() if(!$MODE or !$MODES{$MODE});
 my $PACKAGE = 'PARTIES::'.$MODE;
 my $factory = $PACKAGE->new({	   
                 -version => $VERSION,
-				# common options
+                # common options
                 -config => $CONFIG,
                 -auto => $AUTO ? 'TRUE' : 'FALSE',
-				-genome => $GENOME,
-				-out_dir => $OUT_DIR,
-				-bam => $BAM,
-				-keep_tmp => $KEEP_TMP ? 'TRUE' : 'FALSE',	
-				-force => $FORCE ? 'TRUE' : 'FALSE',
-				-seq_id => $SEQ_ID,
-				-list_of_seq => $LIST_OF_SEQs,
-				-min_seq_length => $MIN_SEQ_LENGTH,
-				-threads => $THREADS,	
-				-verbose=>$VERBOSE ? 'TRUE' : 'FALSE',	
-				-quiet=>$QUIET ? 'TRUE' : 'FALSE',
-	    			-prefix => $PREFIX,
-	    			-suffix => $SUFFIX,
-	    			-check_config => $CHECK_CONFIG ? 'TRUE' : 'FALSE',
-				
-				# Map options
-	    			-index_genome => $INDEX_GENOME ? 'TRUE' : 'FALSE',
-	    			-use_insert_reference => $USE_INSERT_REFERENCE ? 'TRUE' : 'FALSE',
-				
-				-min_match_length => $MIN_MATCH_LENGTH,
-				-max_mismatch => $MAX_MISMATCH,
-				
-				# MIRAA options   
-				-max_insert_size => $MAX_INSERT_SIZE,
-			        -min_dist_between_bp => $MIN_DIST_BETWEEN_BP,
-				-min_dist_from_extremities => $MIN_DIST_FROM_EXTREMITIES,
-				-min_break_coverage => $MIN_BREAK_COVERAGE,			    
-    		    		
-				# MICA options    
-	    			-germline_genome => \@ASSEMBLIES,
-	    			-germline_blat => \@BLATs,
-				-control_bam => $CONTROL_BAM,
-				-miraa => $MIRAA,
-				-junction_flank_seq_length => $JUNCTION_FLANK_SEQ_LENGTH,
-				-not_bounded_by_ta => $NOT_BOUNDED_BY_TA ? 'TRUE' : 'FALSE',
-	                        -repeat_masker_parameters  => $REPEAT_MASKER_PARAMETERS,
-				-skip_repeat_masker => $SKIP_REPEAT_MASKER ? 'TRUE' : 'FALSE',
-				-sequences_per_blat_batch => $SEQUENCES_PER_BLAT_BATCH,
-	
-				# Insert options    
-	    			-ies => $IES_FILE,
-				-low_case => $LOW_CASE ? 'TRUE' : 'FALSE',
-				
-				# Assembly options 
-	    			-fastq1 => $FASTQ1,
-	    			-fastq2 => $FASTQ2,
-	    			-kmer => \@KMER,
-	    			-insert_size => $INSERT_SIZE,
-	    			-max_coverage => $MAX_COVERAGE,
-	    			-min_coverage => $MIN_COVERAGE,
-	    			-min_contig_length => $MIN_CONTIG_LENGTH,
-				-skip_velvet_assembly => $SKIP_VELVET_ASSEMBLY ? 'TRUE' : 'FALSE',
-	    			-no_zip => $NO_ZIP ? 'TRUE' : 'FALSE',	
+                -genome => $GENOME,
+                -out_dir => $OUT_DIR,
+                -bam => $BAM,
+                -keep_tmp => $KEEP_TMP ? 'TRUE' : 'FALSE',	
+                -force => $FORCE ? 'TRUE' : 'FALSE',
+                -seq_id => $SEQ_ID,
+                -list_of_seq => $LIST_OF_SEQs,
+                -min_seq_length => $MIN_SEQ_LENGTH,
+                -threads => $THREADS,	
+                -verbose=>$VERBOSE ? 'TRUE' : 'FALSE',	
+                -quiet=>$QUIET ? 'TRUE' : 'FALSE',
+                -prefix => $PREFIX,
+                -suffix => $SUFFIX,
+                -check_config => $CHECK_CONFIG ? 'TRUE' : 'FALSE',
 
-				# MIRET options
-			        -germline_ies => $GERMLINE_IES_FILE,
-			        -chr_cor => $CHR_COR,
-			        -germline_bam => $GERMLINE_BAM,
-			        -score_method => $SCORE_METHOD,
-			        -control => $CONTROL,
-			        -min_non_ambigous_distance => $MIN_NON_AMBIGOUS_DISTANCE,
-				-tophat => $TOPHAT ? 'TRUE' : 'FALSE',
-				-trace => $TRACE ? 'TRUE' : 'FALSE',
+                # Map options
+                -index_genome => $INDEX_GENOME ? 'TRUE' : 'FALSE',
+                -use_insert_reference => $USE_INSERT_REFERENCE ? 'TRUE' : 'FALSE',
 
-				# MILORD options
-				-min_size => $MIN_SIZE,
-				-max_size => $MAX_SIZE,
-				-report_reads => $REPORT_READS ? 'TRUE' : 'FALSE',
-				-consider_trans_deletion => $CONSIDER_TRANS_DELETION ? 'TRUE' : 'FALSE',
-				-consider_overlapping => $CONSIDER_OVERLAPPING ? 'TRUE' : 'FALSE',
-				
-				# Compare options
-				-reference_set => $REFERENCE_SET_FILE,
-				-current_set => $CURRENT_SET_FILE,
-				-max_dist => $MAX_DIST,
-				-tab => $TAB ? 'TRUE' : 'FALSE',	
-                
-				# Concatemer options    
-				-min_mapping_quality => $MIN_MAPPING_QUALITY,
-				-no_remove_pcr_duplicates => $NO_REMOVE_PCR_DUP ? 'TRUE' : 'FALSE',
+                -min_match_length => $MIN_MATCH_LENGTH,
+                -max_mismatch => $MAX_MISMATCH,
+
+                # MIRAA options   
+                -max_insert_size => $MAX_INSERT_SIZE,
+                -min_dist_between_bp => $MIN_DIST_BETWEEN_BP,
+                -min_dist_from_extremities => $MIN_DIST_FROM_EXTREMITIES,
+                -min_break_coverage => $MIN_BREAK_COVERAGE,			    
+
+                # MICA options    
+                -germline_genome => \@ASSEMBLIES,
+                -germline_blat => \@BLATs,
+                -control_bam => $CONTROL_BAM,
+                -miraa => $MIRAA,
+                -junction_flank_seq_length => $JUNCTION_FLANK_SEQ_LENGTH,
+                -not_bounded_by_ta => $NOT_BOUNDED_BY_TA ? 'TRUE' : 'FALSE',
+                    -repeat_masker_parameters  => $REPEAT_MASKER_PARAMETERS,
+                -skip_repeat_masker => $SKIP_REPEAT_MASKER ? 'TRUE' : 'FALSE',
+                -sequences_per_blat_batch => $SEQUENCES_PER_BLAT_BATCH,
+
+                # Insert options    
+                -ies => $IES_FILE,
+                -low_case => $LOW_CASE ? 'TRUE' : 'FALSE',
+
+                # Assembly options 
+                -fastq1 => $FASTQ1,
+                -fastq2 => $FASTQ2,
+                -kmer => \@KMER,
+                -insert_size => $INSERT_SIZE,
+                -max_coverage => $MAX_COVERAGE,
+                -min_coverage => $MIN_COVERAGE,
+                -min_contig_length => $MIN_CONTIG_LENGTH,
+                -skip_velvet_assembly => $SKIP_VELVET_ASSEMBLY ? 'TRUE' : 'FALSE',
+                -no_zip => $NO_ZIP ? 'TRUE' : 'FALSE',	
+
+                # MIRET options
+                -germline_ies => $GERMLINE_IES_FILE,
+                -chr_cor => $CHR_COR,
+                -germline_bam => $GERMLINE_BAM,
+                -score_method => $SCORE_METHOD,
+                -control => $CONTROL,
+                -min_non_ambigous_distance => $MIN_NON_AMBIGOUS_DISTANCE,
+                -tophat => $TOPHAT ? 'TRUE' : 'FALSE',
+                -trace => $TRACE ? 'TRUE' : 'FALSE',
+
+                # MILORD options
+                -min_size => $MIN_SIZE,
+                -max_size => $MAX_SIZE,
+                -report_reads => $REPORT_READS ? 'TRUE' : 'FALSE',
+                -consider_trans_deletion => $CONSIDER_TRANS_DELETION ? 'TRUE' : 'FALSE',
+                -consider_overlapping => $CONSIDER_OVERLAPPING ? 'TRUE' : 'FALSE',
+
+                # Compare options
+                -reference_set => $REFERENCE_SET_FILE,
+                -current_set => $CURRENT_SET_FILE,
+                -max_dist => $MAX_DIST,
+                -tab => $TAB ? 'TRUE' : 'FALSE',	
+
+                # Concatemer options    
+                -min_mapping_quality => $MIN_MAPPING_QUALITY,
+                -no_remove_pcr_duplicates => $NO_REMOVE_PCR_DUP ? 'TRUE' : 'FALSE',
+
+                # MEND options    
+                -excision_errors => $EXCISION_ERROR_FILE,  
 				});
 
 # Check we have all parameters
@@ -271,7 +279,7 @@ exit 1 if($MODE eq 'Run');
 
 
 
-
+# store results
 my %RESULTS;
 my $pm = new Parallel::ForkManager($THREADS);
 $pm -> run_on_finish (
@@ -286,6 +294,7 @@ $pm -> run_on_finish (
 );
 
 
+# select sequence IDs
 my %SEQ_IDs;
 my $NB_SEQ;
 if($LIST_OF_SEQs and -e $LIST_OF_SEQs) {
@@ -306,7 +315,7 @@ $factory->stderr("Calculating on ".$factory->{GENOME}."... $NB_SEQ sequences\n")
 
 
 my $seqio = new Bio::SeqIO(-file=> $factory->{GENOME},-format=>'Fasta');
-
+# processing ...
 my $N=0;
 while(my $seq = $seqio->next_seq) {
    my $seq_id = $seq->id;
@@ -326,6 +335,7 @@ while(my $seq = $seqio->next_seq) {
 }
 $factory->stderr("Waiting end of job(s) ...\n") if($VERBOSE);
 
+# waiting for all jobs
 $pm->wait_all_children;  
 
 $factory->finish(\%RESULTS);
