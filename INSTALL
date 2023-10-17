@@ -8,7 +8,16 @@ ParTIES INSTALLATION
 
   - Perl 5.8.0 or higher installed.
 
-2. SOFTWARE REQUIREMENTS
+
+2. INSTALLATION USING SINGULARITY
+#################################
+
+singularity build --fakeroot singularity/ParTIES.sif singularity/ParTIES.def 
+singularity exec singularity/ParTIES.sif parties
+
+
+
+3. SOFTWARE REQUIREMENTS
 ########################
 
   - velvet (1.2.10 or later)
@@ -20,9 +29,8 @@ ParTIES INSTALLATION
 
   An example install procedure is found at the end of this document.
 
-
-3. INSTALLATION
-###############
+4. MANUAL INSTALLATION
+######################
 
 
   - Download the files to the directory you wish to install them in.
@@ -49,6 +57,7 @@ ParTIES INSTALLATION
      # MIRET : Method of Ies RETention
      # MILORD : Method of Identification and Localization of Rare Deletion
      # Compare : Compare IES/InDel datasets
+     # ...
 
   - Add to your path
 
@@ -58,7 +67,7 @@ ParTIES INSTALLATION
 
 
 
-4. EXAMPLE OF PROCEDURE FOR THE REQUIREMENTS
+5. EXAMPLE OF PROCEDURE FOR THE REQUIREMENTS
 #############################################
 
    
