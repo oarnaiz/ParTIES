@@ -1,1 +1,140 @@
-empty
+#distribution based on: debian 9
+Bootstrap: docker
+From: debian:9-slim
+
+%labels
+    Author olivier.arnaiz AT i2bc.paris-saclay.fr
+    Version v1.06
+    MyLabel ParTIES
+    
+%environment
+export LC_ALL=C
+export LC_NUMERIC=en_GB.UTF-8
+export PATH="$PATH:/opt/miniconda/bin:/opt/RepeatMasker/"
+export PERL5LIB=$PERL5LIB:/opt/miniconda/lib/perl5/site_perl/:/opt/ParTIES/lib
+    
+%help
+This container holds ParTIES with some packages
+
+%files
+RepeatMasker-4.1.5.tar.gz /opt
+
+%post
+    #essential stuff but minimal
+    echo "deb http://archive.debian.org/debian stretch main" > /etc/apt/sources.list
+    
+ 	# SPECIAL CASE CHANGE PROXY
+ 	###################################
+    PROXY=proxy-web.local.i2bc.paris-saclay.fr:3128
+    
+	export HTTP_PROXY=http://$PROXY
+	export HTTPS_PROXY=http://$PROXY
+	export FTP_PROXY=http://$PROXY
+    echo  "Acquire::http::Proxy \"http://$PROXY\";" > /etc/apt/apt.conf.d/proxy.conf
+    echo  "Acquire::https::Proxy \"https://$PROXY\";"   >> /etc/apt/apt.conf.d/proxy.conf
+    echo "Acquire::ftp::Proxy \"ftp://$PROXY\";"   >> /etc/apt/apt.conf.d/proxy.conf
+    cat /etc/apt/apt.conf.d/proxy.conf
+    
+    apt update
+    apt install -y wget
+    echo  "http_proxy = http://$PROXY/" >> /etc/wgetrc
+    echo  "https_proxy = http://$PROXY/" >> /etc/wgetrc
+    echo  "ftp_proxy = http://$PROXY/"  >> /etc/wgetrc
+    echo 'use_proxy = on' >> /etc/wgetrc
+       
+    ############################################
+    #Install libs
+    ############################################
+    apt update
+    apt update  --fix-missing
+
+    apt install -y wget zip unzip bzip2 less make gcc-multilib git
+
+    # Perl libraries
+    apt install -y libfile-which-perl libbio-samtools-perl libparallel-forkmanager-perl
+
+    # python libs
+    apt install -y python3-h5py python-h5py
+    
+    # cleaning
+    apt autoremove --purge
+    apt clean   
+
+	# Unpack RepeatMasker
+	cd /opt/
+	#wget https://www.repeatmasker.org/RepeatMasker/RepeatMasker-4.1.5.tar.gz
+	tar -xzvf RepeatMasker-4.1.5.tar.gz
+	rm RepeatMasker-4.1.5.tar.gz
+	
+	############################################
+    #Install miniconda
+    ############################################
+    cd /opt
+    rm -fr miniconda
+
+    #miniconda3: get miniconda3 
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+
+    #install conda
+    bash miniconda.sh -b -p /opt/miniconda
+    export PATH="/opt/miniconda/bin:$PATH"
+    
+ 	# OLIVIER SPECIAL CASE CHANGE PROXY
+    conda config --set proxy_servers.http http://$PROXY
+    conda config --set proxy_servers.https http://$PROXY  
+      
+
+    #add channels
+    #conda config --add channels defaults
+    conda config --add channels bioconda
+    conda config --add channels conda-forge
+    
+    conda install -y h5py
+    conda install -y -c bioconda perl-bio-gff3
+    conda install -y -c bioconda perl-statistics-r
+    conda install -y -c bioconda trf        
+    conda install -y -c bioconda blat    
+    conda install -y -c bioconda rmblast
+    
+    #cleanup
+    conda clean -y --all
+    rm -f /opt/miniconda.sh
+    
+	#Install other programs
+    ############################################
+    apt install -y velvet bowtie2 samtools muscle bwa 
+    
+    #cleanup
+    apt autoremove --purge
+    apt clean   
+
+   
+     # RepeatMasker
+	export PERL5LIB=$PERL5LIB:/opt/miniconda/lib/perl5/site_perl/:/opt/ParTIES/lib
+	export PATH="$PATH:/opt/miniconda/bin:/opt/RepeatMasker/:/opt/ParTIES/"
+    cd /opt/
+	cd RepeatMasker
+	./configure -rmblast_dir /opt/miniconda/bin/ -trf_prgm /opt/miniconda/bin/trf
+	
+
+    
+	#Install ParTIES
+	############################################
+	cd /opt/
+
+	git clone https://github.com/oarnaiz/ParTIES.git
+	ln -s /opt/ParTIES/parties /usr/local/bin
+
+
+
+
+%test
+	
+	/opt/ParTIES/check
+	exit 0
+    
+%runscript
+    export PERL5LIB=$PERL5LIB:/opt/miniconda/lib/perl5/site_perl/:/opt/ParTIES/lib
+	export PATH="$PATH:/opt/miniconda/bin:/opt/RepeatMasker/:/opt/ParTIES/"
+    alias parties="/opt/ParTIES/parties"
+  
