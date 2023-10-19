@@ -458,6 +458,7 @@ sub calculate {
             }
         }
         close FA;
+	#system("$bowtie2_build $unknown_fasta_file $unknown_fasta_file")
         
 
         # mapping
