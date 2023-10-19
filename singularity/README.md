@@ -7,6 +7,7 @@ singularity build --fakeroot ParTIES.sif ParTIES.def
 # Create ParTIES alias
 ```bash
 alias parties='singularity exec  ParTIES.sif parties'
+```
 
 # Test ParTIES
 ```bash
