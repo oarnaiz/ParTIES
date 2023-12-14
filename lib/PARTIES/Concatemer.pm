@@ -119,7 +119,7 @@ sub _check_mandatory_parameters {
      $self->{IES} = $mica if(!$self->{IES} and -e $mica);
   }
   foreach my $fastq ($self->{FASTQ1},$self->{FASTQ2}) {
-     next if($fastq=~/\.fastq$/);
+     next if($fastq=~/\.fastq$/ or $fastq=~/.fastq.gz/);
      print STDERR "ERROR : fastq file (-fastq $fastq) should be a FASTQ file or does not exist\n" ;
      return 0;
   }  
@@ -234,9 +234,12 @@ sub init {
     foreach my $fastq ($self->{FASTQ1},$self->{FASTQ2}) {
         my $file_basename=basename($fastq);
         $file_basename=~s/\.fastq$//;
+        $file_basename=~s/\.fastq.gz$//;
         $self->stderr("Read ".basename($fastq)." ...\n" );
         my $outfile= $self->{PATH}."/$file_basename.not_well_mapped.fa";
-        open(FASTQ,$fastq) or die "Can not open $fastq";
+        my $cmd = ($fastq=~/.fastq.gz/) ? "zcat $fastq |" : "cat $fastq |";
+	
+        open(FASTQ,$cmd) or die "Can not use $cmd";
         while(<FASTQ>) {
             chomp;
             if($_=~/^\@/) {
