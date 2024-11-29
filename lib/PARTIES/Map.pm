@@ -24,7 +24,11 @@ my %PARAMETERS = (
 			FASTQ2 => {
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 1.2,
 				DESCRIPTION=>"Sequencing file containing reads in Reverse strand"
-				},						
+				},
+			SIZE_TRIMMED_READ => {
+				MANDATORY=>0, DEFAULT=>'', TYPE=>'VALUE', RANK => 1.3,
+				DESCRIPTION=>"Size of the trimmed read. Last base to keep. Default is entire read."
+				},
 			MAX_INSERT_SIZE => {
 				MANDATORY=>0, DEFAULT=>'1000', TYPE=>'VALUE', RANK => 2,
 				DESCRIPTION=>"Max sequencing insert size"
@@ -101,7 +105,7 @@ sub _check_mandatory_parameters {
   return 0 if(!$self->SUPER::_check_mandatory_parameters);
   
   foreach my $fastq ($self->{FASTQ1},$self->{FASTQ2}) {
-     next if($fastq=~/\.fastq$/ and -e $fastq);
+     next if(($fastq=~/\.fastq$/ or $fastq=~/.fastq.gz/) and -e $fastq);
      print STDERR "ERROR : fastq file (-fastq $fastq) should be a FASTQ file or does not exist\n" ;
      return 0;
   }
@@ -145,6 +149,28 @@ sub init {
     $self->{BT2_INDEX} = $self->{GENOME};
   }
   die "ERROR bowtie2 index genome does not exist for ",$self->{GENOME}," (use -index_genome)\n" if(!-e $self->{BT2_INDEX}.".1.bt2") ;
+  
+  # Trimming reads
+  if($self->{SIZE_TRIMMED_READ}) {
+      my $fastx_trimmer = PARTIES::Config->get_program_path('fastx_trimmer');
+      foreach my $p (qw(FASTQ1 FASTQ2)) {
+          my $fastq =$self->{$p};
+          my $fastq_out=$self->{PATH}."/tmp/".basename($fastq);
+          $fastq_out=~s/\.fastq$//;
+          $fastq_out=~s/\.fastq.gz$//;
+          $fastq_out.='-l'.$self->{SIZE_TRIMMED_READ}.'.fastq';
+          my $cmd= join(" ",'cat',$fastq,' | ',$fastx_trimmer,'-l',$self->{SIZE_TRIMMED_READ},'-o',$fastq_out);
+          if($fastq=~/.fastq.gz/) {
+              $cmd='z'.$cmd;
+          }
+          $self->stderr("$cmd\n");
+          system("$cmd");
+          $self->{$p}=$fastq_out;    
+      } 
+  }
+
+  
+  
 }
 
 =head2 finish
