@@ -22,7 +22,7 @@ if ( $] && $] < $PERL_VERSION ) {
 ## Check for program dependencies
 ##
 
-my @PROGRAM_DEP = qw(velveth velvetg gzip bowtie2 samtools RepeatMasker blat muscle bwa);
+my @PROGRAM_DEP = qw(fastx_trimmer velveth velvetg gzip bowtie2 samtools RepeatMasker blat muscle bwa);
 
 foreach my $program (@PROGRAM_DEP) {
    my ($path) = which($program);
