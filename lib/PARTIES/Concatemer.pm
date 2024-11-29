@@ -25,6 +25,10 @@ my %PARAMETERS = (
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 1.2,
 				DESCRIPTION=>"Sequencing file containing reads in Reverse strand"
 				},				
+			SIZE_TRIMMED_READ => {
+				MANDATORY=>0, DEFAULT=>'', TYPE=>'VALUE', RANK => 1.3,
+				DESCRIPTION=>"Size of the trimmed read. Last base to keep. Default is entire read."
+				},
 			IES => {
 				MANDATORY=>1, DEFAULT=>'', TYPE=>'VALUE', RANK => 2,
 				DESCRIPTION=>"IES file, usually MICA output"
@@ -52,6 +56,10 @@ my %PARAMETERS = (
 			NO_REMOVE_PCR_DUPLICATES => {
 				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
 				DESCRIPTION=>"Skip PCR duplicates removal procedure"
+				},			
+            CONSIDER_DELETION_AROUND_TA => {
+				MANDATORY=>0, DEFAULT=>'FALSE', TYPE=>'BOOLEAN', RANK => 3,
+				DESCRIPTION=>"Accept one deletion in +1 / -1 around the TA"
 				},
 		);
 
@@ -119,7 +127,7 @@ sub _check_mandatory_parameters {
      $self->{IES} = $mica if(!$self->{IES} and -e $mica);
   }
   foreach my $fastq ($self->{FASTQ1},$self->{FASTQ2}) {
-     next if($fastq=~/\.fastq$/ or $fastq=~/.fastq.gz/);
+     next if(($fastq=~/\.fastq$/ or $fastq=~/.fastq.gz/) and -e $fastq);
      print STDERR "ERROR : fastq file (-fastq $fastq) should be a FASTQ file or does not exist\n" ;
      return 0;
   }  
@@ -161,9 +169,9 @@ sub init {
 
     my ($threads,$bowtie2_build,$bowtie2,$samtools) = ($self->{THREADS},PARTIES::Config->get_program_path('bowtie2-build'),PARTIES::Config->get_program_path('bowtie2'),PARTIES::Config->get_program_path('samtools'));
     my ($bwa) =PARTIES::Config->get_program_path('bwa');
-    $self->stderr("Write IES fasta file ...\n" );
+    $self->stderr("Write IES fasta file(s) ...\n" );
     my $ies_fasta_file = $self->{PATH}."/tmp/ies.fa";
-    $self->{IES_FASTA_FILE} = $ies_fasta_file;
+    push @{$self->{IES_FASTA_FILEs}},{fname=> $ies_fasta_file, ref_pref=>'IES', deletion=>'FALSE'};
     
     my $min_ies_length = '';
     my $seqout = new Bio::SeqIO(-file => ">$ies_fasta_file", -format => 'fasta');
@@ -175,9 +183,40 @@ sub init {
             $seqout->write_seq(new Bio::Seq(-id=>$id,-seq=>$sequence));
             $min_ies_length=length($sequence) if($min_ies_length eq '' or $min_ies_length > length($sequence));
             $self->{IES_SEQ}->{$id}=$sequence;
+                
+
+            
+            
         }
     }
     $seqout->close;
+    
+    system("$bowtie2_build $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
+    system("$bwa index $ies_fasta_file 2> /dev/null && $samtools faidx $ies_fasta_file");
+    
+    if($self->{DELETION_AROUND_TA} eq 'TRUE') {
+        my @ies_ids= sort keys %{$self->{IES_SEQ}};
+        my $ies_fasta_file = $self->{PATH}."/tmp/ies_m1del.fa";
+        push @{$self->{IES_FASTA_FILEs}},{fname=> $ies_fasta_file, ref_pref=>'IESm1del',deletion=>'TRUE'};
+        my $seqout = new Bio::SeqIO(-file => ">$ies_fasta_file", -format => 'fasta');
+        foreach my $id (@ies_ids) {
+            my $m1_del_id=$id."_M1DEL";
+            my $m1_del_sequence = $self->{IES_SEQ}->{$id};
+            substr($m1_del_sequence,2,1)='';
+            substr($m1_del_sequence,length($m1_del_sequence)-3,1)='';
+            
+            $seqout->write_seq(new Bio::Seq(-id=>$m1_del_id,-seq=>$m1_del_sequence));
+            $min_ies_length=length($m1_del_sequence) if($min_ies_length eq '' or $min_ies_length > length($m1_del_sequence));
+            $self->{IES_SEQ}->{$m1_del_id}=$m1_del_sequence;
+            
+        }
+    
+        system("$bowtie2_build $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
+        system("$bwa index $ies_fasta_file 2> /dev/null && $samtools faidx $ies_fasta_file");
+            
+    }
+    
+    
     
     # Find repeated boundaries
     my %boundaries;
@@ -199,9 +238,6 @@ sub init {
     }
     $self->{REPEATED_BOUNDARIES}=\%boundaries;
     
-    
-    system("$bowtie2_build $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
-    system("$bwa index $ies_fasta_file 2> /dev/null && $samtools faidx $ies_fasta_file");
     $self->stderr("Done\n" );
 
 
@@ -209,16 +245,14 @@ sub init {
     $self->stderr("Read BAM files ...\n" );
     my %mapped_on_references;
     foreach my $bam_file ($self->{BAM},$self->{GERMLINE_BAM}) {
-        $self->stderr("Read $bam_file ...\n" );
+        $self->stderr("Read ".basename($bam_file)." ...\n" );
         if(!-e $bam_file) {
             print STDERR "\n# WARNING $bam_file does not exist ...";
             exit;
         } else {
             foreach my $seq_id (`samtools view -H $bam_file | grep '\@SQ' | awk '{ print \$2 }' | perl -p -e 's/^SN://'`) {
                 foreach my $line (`samtools view -F 4 $bam_file $seq_id  `) {
-                    #my ($qname,$rname,$cigar)= split /\t/,$line;
                     my ($qname,$flag,$rname,$pos,$mapq,$cigar,$mrnm,$mpos,$tlen,$seq,$qual,@opt)= split /\t/,$line;
-                    #die "$qname,$rname,$cigar";
                     next if($cigar!~/^\d+M$/);
                     $mapped_on_references{$qname}++ if($rname ne '*');
                 }   
@@ -229,6 +263,7 @@ sub init {
     
     my @fastq_files;
     # create filtered fastq files
+    my $fastx_trimmer = PARTIES::Config->get_program_path('fastx_trimmer');
     my $file_idx=1;
     my %reads;
     foreach my $fastq ($self->{FASTQ1},$self->{FASTQ2}) {
@@ -237,8 +272,18 @@ sub init {
         $file_basename=~s/\.fastq.gz$//;
         $self->stderr("Read ".basename($fastq)." ...\n" );
         my $outfile= $self->{PATH}."/$file_basename.not_well_mapped.fa";
-        my $cmd = ($fastq=~/.fastq.gz/) ? "zcat $fastq |" : "cat $fastq |";
-	
+        
+        my $cmd;
+        # Trimming reads
+        if($self->{SIZE_TRIMMED_READ}) {
+            $cmd = join(" ",'cat',$fastq,' | ',$fastx_trimmer,'-l',$self->{SIZE_TRIMMED_READ}, ' | ');
+        } else {
+            $cmd="cat $fastq |";
+        }
+        if($fastq=~/.fastq.gz/) {
+              $cmd='z'.$cmd;
+        }
+        
         open(FASTQ,$cmd) or die "Can not use $cmd";
         while(<FASTQ>) {
             chomp;
@@ -327,144 +372,142 @@ sub _mapping {
     my ($threads,$bowtie2_build,$bowtie2,$samtools) = ($self->{THREADS},PARTIES::Config->get_program_path('bowtie2-build'),PARTIES::Config->get_program_path('bowtie2'),PARTIES::Config->get_program_path('samtools'));
     my ($bwa) =PARTIES::Config->get_program_path('bwa');
   
-    my $ies_fasta_file = $self->{IES_FASTA_FILE} ;    
+    
     
     my $file_basename = $file_handler->{basename};
-    
-    my $bam_file = $self->{PATH}."/$file_basename.round$round.bam";
     my $nb_seq= `grep -c '^>' $seq_fasta_file`;
     chomp $nb_seq;
-    $self->stderr("Process ".basename($seq_fasta_file)." (N=$nb_seq) ; ".basename($bam_file)." ...\n" );
-    
-    
-    my $bam_bowtie_file = $self->{PATH}."/tmp/$file_basename.round$round.BOWTIE.bam";
-    my $bowtie_unmapped_fasta = $self->{PATH}."/tmp/$file_basename.round$round.unmapped.fa";
-    
-    #~ #print STDERR "$bowtie2 -f --threads $threads --very-sensitive-local -L 10 --quiet  -x ".$ies_fasta_file." -U $seq_fasta_file | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bowtie_file - > /dev/null 2>&1 && $samtools index $bam_bowtie_file \n";
-    #~ #print STDERR join('', "$bowtie2 -f --threads $threads --very-sensitive-local -L 10 --quiet  -x ".$ies_fasta_file." -U $seq_fasta_file | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bowtie_file - > /dev/null 2>&1 && $samtools index $bam_bowtie_file");
-    
-    system("$bowtie2 -f --threads $threads --very-sensitive-local -L 10 --quiet  -x ".$ies_fasta_file." -U $seq_fasta_file | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bowtie_file - > /dev/null 2>&1 && $samtools index $bam_bowtie_file");
-    #print STDERR "$samtools view -f 4 $bam_bowtie_file | awk '{ print \">\" \$1 \"\\n\" \$10 }' > $bowtie_unmapped_fasta\n";
-    system("$samtools view -f 4 $bam_bowtie_file | awk '{ print \">\" \$1 \"\\n\" \$10 }' > $bowtie_unmapped_fasta");
-    #print STDERR "$samtools view -b -F 4 $bam_bowtie_file  > $bam_bowtie_file.tmp && mv $bam_bowtie_file.tmp $bam_bowtie_file\n";
-    system("$samtools view -b -F 4 $bam_bowtie_file  > $bam_bowtie_file.tmp && mv $bam_bowtie_file.tmp $bam_bowtie_file");
-    
-    my $bam_bwa_file =  $self->{PATH}."/tmp/$file_basename.round$round.BWA.bam";
-    #print STDERR join('',"$bwa aln -t $threads  $ies_fasta_file $bowtie_unmapped_fasta > $bowtie_unmapped_fasta.sai 2> /dev/null && $bwa samse $ies_fasta_file $bowtie_unmapped_fasta.sai $bowtie_unmapped_fasta 2> /dev/null | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bwa_file - > /dev/null 2>&1");
-    system("$bwa aln -t $threads $ies_fasta_file $bowtie_unmapped_fasta > $bowtie_unmapped_fasta.sai 2> /dev/null && $bwa samse $ies_fasta_file $bowtie_unmapped_fasta.sai $bowtie_unmapped_fasta 2> /dev/null | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bwa_file - > /dev/null 2>&1");
-    
-    #print STDERR "$samtools merge -f $bam_file $bam_bowtie_file $bam_bwa_file";
-    system("$samtools merge -f $bam_file $bam_bowtie_file $bam_bwa_file");
-    #print STDERR "$samtools index $bam_file\n";     
-    
-   # system("$samtools view -F 4 -q 10 -b $bam_file > t.bam && mv t.bam $bam_file");  
-    
-    system("$samtools index $bam_file");     
-    #~ #system("rm $bam_bowtie_file $bam_bwa_file $bowtie_unmapped_fasta.sai $bowtie_unmapped_fasta");
-    $self->stderr("Done\n" );
-    
-    my $nb_read_mapped=`samtools view -F 4 -c $bam_file`;
-    chomp $nb_read_mapped;
-    $self->stderr("Read $bam_file (N=$nb_read_mapped) ... \n" );    
-    my $bam = Bio::DB::Sam->new(-bam  =>$bam_file, -fasta=>$ies_fasta_file)  ;
     my @unmapped_parts;
-    foreach my $aln  ($bam->features(-type=>'match')) {
-        #die $aln->seq_id;
-        next if(!$aln);
-        my $ies_id = $aln->seq_id;
-        next if($ies_id eq '');
-        next if($aln->get_tag_values('XM') > $self->{MAX_MISMATCH});
-        # at least at one edge of the IES
-        next if($aln->start !=1 and $aln->end != length($self->{IES_SEQ}->{$ies_id}));
-        my $read_seq = $aln->query->dna;
-        next if($read_seq=~/N/ or $aln->dna =~/N/);  
-        #print STDERR $aln->qual,"\n";
-        next if($aln->qual < $self->{MIN_MAPPING_QUALITY});
-        my $rname=$aln->query->name;
-        my ($part_start,$part_end) = (1,length($read_seq));
-        if($rname=~/_part_(\d+)_(\d+)/) {
-            ($part_start,$part_end) = ($1,$2);
-            $rname=~s/_part_\S+//;
-        } 
+    $self->stderr("Process ".basename($seq_fasta_file)." (N=$nb_seq)");
+    foreach my $ies_file (@{$self->{IES_FASTA_FILEs}}) {
+        my $ies_fasta_file = $ies_file->{fname};
+        my $ies_ref_pref = $ies_file->{ref_pref};
+        my $ies_with_deletion = $ies_file->{deletion};
         
-        my $cigar = $aln->cigar_str;  
+        
+        my $bam_file = $self->{PATH}."/$file_basename.MAPPER.".$ies_ref_pref.".round$round.bam";
+        $self->stderr("Create mapping ".basename($bam_file)." ...\n" );
+        
+        
+        my $bam_bowtie_file = $self->{PATH}."/tmp/$file_basename.round$round.BOWTIE.bam";
+        my $bowtie_unmapped_fasta = $self->{PATH}."/tmp/$file_basename.round$round.unmapped.fa";
+            
+        system("$bowtie2 -f --threads $threads --very-sensitive-local -L 10 --quiet  -x ".$ies_fasta_file." -U $seq_fasta_file | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bowtie_file - > /dev/null 2>&1 && $samtools index $bam_bowtie_file");
+        system("$samtools view -f 4 $bam_bowtie_file | awk '{ print \">\" \$1 \"\\n\" \$10 }' > $bowtie_unmapped_fasta");
+        system("$samtools view -b -F 4 $bam_bowtie_file  > $bam_bowtie_file.tmp && mv $bam_bowtie_file.tmp $bam_bowtie_file");
+        my $bam_bwa_file =  $self->{PATH}."/tmp/$file_basename.round$round.BWA.bam";
+        system("$bwa aln -t $threads $ies_fasta_file $bowtie_unmapped_fasta > $bowtie_unmapped_fasta.sai 2> /dev/null && $bwa samse $ies_fasta_file $bowtie_unmapped_fasta.sai $bowtie_unmapped_fasta 2> /dev/null | $samtools view -uS - 2> /dev/null | $samtools sort -o $bam_bwa_file - > /dev/null 2>&1");
+        system("$samtools merge -f $bam_file $bam_bowtie_file $bam_bwa_file ; $samtools index $bam_file");
+        
+        $self->stderr("Done\n" );
+        
+        my $nb_read_mapped=`samtools view -F 4 -c $bam_file`;
+        chomp $nb_read_mapped;
+        $self->stderr("Read $bam_file (N=$nb_read_mapped) ... \n" );    
+        my $bam = Bio::DB::Sam->new(-bam  =>$bam_file, -fasta=>$ies_fasta_file)  ;
+        foreach my $aln  ($bam->features(-type=>'match')) {
+            #die $aln->seq_id;
+            next if(!$aln);
+            my $ies_id = $aln->seq_id;
+            my $ies_name = $ies_id;
+            $ies_name=~s/_M1DEL//;
+            next if($ies_id eq '');
+            my $rname=$aln->query->name;
+            my $cigar = $aln->cigar_str; 
+            
+            # if already mapped
+            next if($self->{ALIGNMENTs}->{$rname}->{$file_idx} );
+        
+            next if($aln->get_tag_values('XM') > $self->{MAX_MISMATCH});
+            # at least at one edge of the IES
+            next if($aln->start !=1 and $aln->end != length($self->{IES_SEQ}->{$ies_id}));
+            my $read_seq = $aln->query->dna;
+            next if($read_seq=~/N/ or $aln->dna =~/N/);  
+            
+            next if($aln->qual < $self->{MIN_MAPPING_QUALITY});
+            my ($part_start,$part_end) = (1,length($read_seq));
+            if($rname=~/_part_(\d+)_(\d+)/) {
+                ($part_start,$part_end) = ($1,$2);
+                $rname=~s/_part_\S+//;
+            } 
+             
+            
+            $self->{ALIGNMENTs}->{$rname}->{$file_idx} = {name =>$rname, seq=>$read_seq, has_a_partial_full_match=>0, aln_length=>0, ambiguous_matches=>'FALSE'} if(!$self->{ALIGNMENTs}->{$rname} or !$self->{ALIGNMENTs}->{$rname}->{$file_idx});
+            
+            my ($qstart,$qend) = ($aln->query->start+$part_start-1,$aln->query->end+$part_start-1);
+            
+            my $full_ies_match = ($aln->start==1 and $aln->end==length($self->{IES_SEQ}->{$ies_id})) ? 'TRUE' : 'FALSE';
 
-        
-        $self->{ALIGNMENTs}->{$rname}->{$file_idx} = {name =>$rname, seq=>$read_seq, has_a_partial_full_match=>0, aln_length=>0, ambiguous_matches=>'FALSE'} if(!$self->{ALIGNMENTs}->{$rname} or !$self->{ALIGNMENTs}->{$rname}->{$file_idx});
-        
-        my ($qstart,$qend) = ($aln->query->start+$part_start-1,$aln->query->end+$part_start-1);
-        
-        my $full_ies_match = ($aln->start==1 and $aln->end==length($self->{IES_SEQ}->{$ies_id})) ? 'TRUE' : 'FALSE';
-        print STDERR join(" ","R$round",$aln->query->name,$ies_id,'l='.length($self->{IES_SEQ}->{$ies_id}),$aln->start, $aln->end,$cigar,$aln->strand,"full_ies_match=$full_ies_match", $qstart,$qend,'part',$part_start,$part_end),"\n"
-if($rname eq 'NS500446:630:HLMV2AFXY:1:11201:10814:11874');
-        # possible alignment types
-        if($cigar =~ /^(\d+)M$/) {
-            if($1 > $self->{MIN_MATCH_LENGTH}) {
-                my $part = { type=>'M', tname =>$ies_id, tstart=>$aln->start, tend=>$aln->end , strand=>$aln->strand, qstart=> $qstart,qend=> $qend,seq=>$read_seq, full_ies_match=>$full_ies_match};
-                
-                my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
-                $part->{ambiguous_match} = $ambiguous_match;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
-                
-                push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{has_a_partial_full_match} = 1;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($read_seq);
-                
-                
-            }
-            
-        } elsif($cigar =~ /^(\d+)M(\d+)S$/ and $aln->end == length($self->{IES_SEQ}->{$ies_id})){
-            
-            if($1 > $self->{MIN_MATCH_LENGTH}) {
-                
-                my $part = { type=>'MS', tname =>$ies_id, tstart=>$aln->start, tend=>$aln->end , strand=>$aln->strand , qstart=> $qstart,qend=> $qend, seq => substr($read_seq,0,$1-2) , full_ies_match=>$full_ies_match};
-                
-                my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
-                $part->{ambiguous_match} = $ambiguous_match;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
-                
-                push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
-                
-                push @unmapped_parts , {id=>join("_",$rname,'part',$qend+1,length(substr($read_seq,$1-2))+$qend), seq => substr($read_seq,$1-2) };
-                
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
-            }
 
-        } elsif ($cigar =~ /^(\d+)S(\d+)M$/ and $aln->start ==1 ) {
+            # possible alignment types
+            if($cigar =~ /^(\d+)M$/) {
+                if($1 > $self->{MIN_MATCH_LENGTH}) {
+                    my $part = { type=>'M', tname =>$ies_name, tstart=>$aln->start, tend=>$aln->end , strand=>$aln->strand, qstart=> $qstart,qend=> $qend,seq=>$read_seq, full_ies_match=>$full_ies_match, match_with_deletion=>$ies_with_deletion};
+                    
+                    my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
+                    $part->{ambiguous_match} = $ambiguous_match;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
+                    
+                    push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{has_a_partial_full_match} = 1;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($read_seq);
+                    
+                    
+                }
                 
-            if($2 > $self->{MIN_MATCH_LENGTH}) {
-                my $part = { type=>'SM', tname =>$ies_id, tstart=>$aln->start, tend=>$aln->end, strand=>$aln->strand, qstart=> $qstart,qend=> $qend, seq => substr($read_seq,$1+2) , full_ies_match=>$full_ies_match};
+            } elsif($cigar =~ /^(\d+)M(\d+)S$/ and $aln->end == length($self->{IES_SEQ}->{$ies_id})){
                 
-                my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
-                $part->{ambiguous_match} = $ambiguous_match;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
-                
-                push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
-                push @unmapped_parts , {id=>join("_",$rname,'part',$part_start ,$part_start+length(substr($read_seq,0,$1+2))), seq => substr($read_seq,0,$1+2) };
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
-            }
+                if($1 > $self->{MIN_MATCH_LENGTH}) {
+                    
+                    my $part = { type=>'MS', tname =>$ies_name, tstart=>$aln->start, tend=>$aln->end , strand=>$aln->strand , qstart=> $qstart,qend=> $qend, seq => substr($read_seq,0,$1-2) , full_ies_match=>$full_ies_match, match_with_deletion=>$ies_with_deletion};
+                    
+                    my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
+                    $part->{ambiguous_match} = $ambiguous_match;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
+                    
+                    push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
+                    
+                    push @unmapped_parts , {id=>join("_",$rname,'part',$qend+1,length(substr($read_seq,$1-2))+$qend), seq => substr($read_seq,$1-2) };
+                    
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
+                }
 
-        } elsif ($cigar =~ /^(\d+)S(\d+)M(\d+)S$/ and $aln->start ==1 and $aln->end == length($self->{IES_SEQ}->{$ies_id})){
-            
-            if($2 > $self->{MIN_MATCH_LENGTH}) {
-                my $part = { type=>'SMS',tname =>$ies_id, tstart=>$aln->start, tend=>$aln->end, strand=>$aln->strand , qstart=> $aln->query->start,qend=> $aln->query->end, seq => substr($read_seq,$1+2,$2-4), full_ies_match=>$full_ies_match };
-                  
-                my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
-                $part->{ambiguous_match} = $ambiguous_match;
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
+            } elsif ($cigar =~ /^(\d+)S(\d+)M$/ and $aln->start ==1 ) {
+                    
+                if($2 > $self->{MIN_MATCH_LENGTH}) {
+                    my $part = { type=>'SM', tname =>$ies_name, tstart=>$aln->start, tend=>$aln->end, strand=>$aln->strand, qstart=> $qstart,qend=> $qend, seq => substr($read_seq,$1+2) , full_ies_match=>$full_ies_match, match_with_deletion=>$ies_with_deletion};
+                    
+                    my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
+                    $part->{ambiguous_match} = $ambiguous_match;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
+                    
+                    push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
+                    push @unmapped_parts , {id=>join("_",$rname,'part',$part_start ,$part_start+length(substr($read_seq,0,$1+2))), seq => substr($read_seq,0,$1+2) };
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
+                }
+
+            } elsif ($cigar =~ /^(\d+)S(\d+)M(\d+)S$/ and $aln->start ==1 and $aln->end == length($self->{IES_SEQ}->{$ies_id})){
                 
-                push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
+                if($2 > $self->{MIN_MATCH_LENGTH}) {
+                    my $part = { type=>'SMS',tname =>$ies_name, tstart=>$aln->start, tend=>$aln->end, strand=>$aln->strand , qstart=> $aln->query->start,qend=> $aln->query->end, seq => substr($read_seq,$1+2,$2-4), full_ies_match=>$full_ies_match , match_with_deletion=>$ies_with_deletion};
+                      
+                    my $ambiguous_match = (!$self->{REPEATED_BOUNDARIES}->{length($part->{seq})} or !$self->{REPEATED_BOUNDARIES}->{length($part->{seq})}->{$part->{seq}}) ? 'FALSE' : 'TRUE';
+                    $part->{ambiguous_match} = $ambiguous_match;
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{ambiguous_matches} = 'TRUE' if($ambiguous_match eq 'TRUE');
+                    
+                    push @{$self->{ALIGNMENTs}->{$rname}->{$file_idx}->{parts}}, $part;
+                    
+                    $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
+                    
+                    push @unmapped_parts , {id=>join("_",$rname,'part',1,length(substr($read_seq,0,$1+2))), seq => substr($read_seq,0,$1+2) };
+                    push @unmapped_parts , {id=>join("_",$rname,'part',$aln->query->end+1,length(substr($read_seq,$1+$2-2))+$aln->query->end), seq => substr($read_seq,$1+$2-2) };
+                }
                 
-                $self->{ALIGNMENTs}->{$rname}->{$file_idx}->{aln_length} += length($part->{seq});
-                
-                push @unmapped_parts , {id=>join("_",$rname,'part',1,length(substr($read_seq,0,$1+2))), seq => substr($read_seq,0,$1+2) };
-                push @unmapped_parts , {id=>join("_",$rname,'part',$aln->query->end+1,length(substr($read_seq,$1+$2-2))+$aln->query->end), seq => substr($read_seq,$1+$2-2) };
             }
-            
+                
         }
-            
+        $self->stderr("Done\n" ); 
     }
-    $self->stderr("Done\n" ); 
     return \@unmapped_parts;
     
     
@@ -500,20 +543,20 @@ sub finish {
             # write new input file
             open(OUT,">$new_input_file") or die $new_input_file;
             foreach my $r (@{$unmapped_parts}) {
+                print STDERR "Write TEST  R$round: ",$r->{seq},"\n" if($r->{id} =~/TEST/);;
                 print OUT ">",$r->{id},"\n",$r->{seq},"\n";
             }
             close OUT;
 
             $unmapped_parts =$self->_mapping($file_handler,$new_input_file);
         }
-       # die;
     }
    
     my $mode = $self->get_mode;
     my $outfile = $self->{PATH}.'/'.$mode.".tab";
     $self->stderr("Write $outfile ... \n");
     open(OUT,">$outfile") or die $outfile;
-    print OUT join("\t",qw(READ_NAME FILE_IDX READ_SEQ MONOMER AMBIGUOUS_MATCHES NB_IES IES_IDs IES_LENGTH DETAILS)),"\n";
+    print OUT join("\t",qw(READ_NAME FILE_IDX READ_SEQ MONOMER AMBIGUOUS_MATCHES MATCH_WITH_DELETION NB_IES IES_IDs IES_LENGTH DETAILS)),"\n";
     foreach my $rname (sort keys %{$self->{ALIGNMENTs}}) {
         foreach my $fh (sort keys %{$self->{ALIGNMENTs}->{$rname}}) {
 
@@ -522,10 +565,12 @@ sub finish {
             next if(!$has_a_partial_full_match);
             my $read_length = length($read_seq);
             next if($read_length != $aln_length);
-            #print STDERR join(" ",$rname,"R$fh",$read_seq,$read_length,$aln_length),"\n";
+            
+            
             my @ies_ids;
             my @details_matches;
             my @ies_lengths;
+            my @match_with_deletions;
             my @parts = sort { $a->{qstart} <=> $b->{qstart} } @{$self->{ALIGNMENTs}->{$rname}->{$fh}->{parts}};
             
             my $uncoherent_concatemer= 0;
@@ -535,26 +580,25 @@ sub finish {
                 }
             }
             next if($uncoherent_concatemer);
+            my $match_with_deletion = 'FALSE';
                 
             foreach my $part (@parts) {
-
                 my ($aln_type,$ies_id,$tstart,$tend,$qstart,$qend,$match_seq,$ambiguous_match,$full_ies_match) = ($part->{type},$part->{tname},$part->{tstart},$part->{tend},$part->{qstart},$part->{qend},$part->{seq},$part->{ambiguous_match},$part->{full_ies_match});
                 my $strand = ($part->{strand} > 0) ? '+' : '-';
                 push @ies_ids, $ies_id;
                 push @ies_lengths, length($self->{IES_SEQ}->{$ies_id});
-                push @details_matches, join(":", $tstart,$tend,$strand,$ambiguous_match);
-                
-                #$unique_ies_ids{$ies_id}=1;
+                push @details_matches, join(":", $tstart,$tend,$strand,$ambiguous_match,$part->{match_with_deletion});
+                 $match_with_deletion = 'TRUE' if($part->{match_with_deletion} eq 'TRUE');
             }
             my $is_monomer = (scalar(@{$self->{ALIGNMENTs}->{$rname}->{$fh}->{parts}}) == 2 and scalar uniq(@ies_ids) ==1) ? 'TRUE' : 'FALSE';
 
-            print OUT join("\t",$rname,"R$fh",$read_seq,$is_monomer,$self->{ALIGNMENTs}->{$rname}->{$fh}->{ambiguous_matches},scalar(@{$self->{ALIGNMENTs}->{$rname}->{$fh}->{parts}}),join(" ",@ies_ids),join(" ",@ies_lengths),join(" ",@details_matches)),"\n";
-            #die ;
+            print OUT join("\t",$rname,"R$fh",$read_seq,$is_monomer,$self->{ALIGNMENTs}->{$rname}->{$fh}->{ambiguous_matches},$match_with_deletion,scalar(@{$self->{ALIGNMENTs}->{$rname}->{$fh}->{parts}}),join(" ",@ies_ids),join(" ",@ies_lengths),join(" ",@details_matches)),"\n";
         }
     }
     close OUT;
         
     $self->stderr("Done\n" ); 
+    $self->remove_temporary_files; 
     
 
 }
