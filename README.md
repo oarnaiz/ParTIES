@@ -71,8 +71,6 @@ The following command will run the entire pipeline (based on the config file), g
 
 ```bash
 OUT=Test1
-gunzip example/Example_reads_1.fastq.gz
-gunzip example/Example_reads_2.fastq.gz
 parties Run -genome example/scaffold51_1.fa -out_dir $OUT -config example/example.cfg
 ```
 
@@ -82,8 +80,8 @@ You can also run each step independently, specifying the intermediate result fil
 
 The map module will align the reads on the reference.
 ```bash
-FASTQ1=example/Example_reads_1.fastq
-FASTQ2=example/Example_reads_2.fastq
+FASTQ1=example/Example_reads_1.fastq.gz
+FASTQ2=example/Example_reads_2.fastq.gz
 OUT=Test2
 parties Map -genome example/scaffold51_1.fa -out_dir $OUT \
  -fastq1 $FASTQ1 -fastq2 $FASTQ2 \
