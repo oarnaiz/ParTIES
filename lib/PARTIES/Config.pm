@@ -70,6 +70,7 @@ sub get_program_path {
     
   # change here 
   my %program_paths = (
+  			fastx_trimmer => '',
 			velveth => '',
 			velvetg => '',
 			gzip => '',
