@@ -3,7 +3,7 @@ use strict;
 use FindBin qw($Bin);
 use lib "$Bin/lib/";
 
-my $VERSION = 1.06;
+my $VERSION = 1.07;
 
 use Getopt::Long;
 use Parallel::ForkManager;
@@ -26,6 +26,9 @@ use PARTIES::Config;
 my ($SEQ_ID,$LIST_OF_SEQs,$CONFIG,$AUTO,$GENOME,$OUT_DIR,$BAM,$PREFIX,$VERBOSE,$KEEP_TMP,$QUIET,$FORCE,$CHECK_CONFIG,$HELP);
 my $THREADS=6;
 my $MIN_SEQ_LENGTH=0;
+
+# Map PARAMETERS
+my ($INDEX_GENOME,$USE_INSERT_REFERENCE,$SIZE_TRIMMED_READ);
 
 # MIRAA PARAMETERS
 my ($MAX_INSERT_SIZE,$MIN_BREAK_COVERAGE,$MAX_MISMATCH,$MIN_MATCH_LENGTH,$MIN_DIST_FROM_EXTREMITIES,$MIN_DIST_BETWEEN_BP);
@@ -55,10 +58,7 @@ my ($REFERENCE_SET_FILE, $CURRENT_SET_FILE,$MAX_DIST,$TAB);
 my ($MIN_MAPPING_QUALITY,$NO_REMOVE_PCR_DUP);
 
 # MEND PARAMETERS
-my ($EXCISION_ERROR_FILE);
-
-# Map PARAMETERS
-my ($INDEX_GENOME,$USE_INSERT_REFERENCE);
+my ($EXCISION_ERROR_FILE,$CONSIDER_DELETION_AROUND_TA);
 
 
 
@@ -98,6 +98,7 @@ GetOptions(
 	# Map options    
 	    '-index_genome' => \$INDEX_GENOME,
 	    '-use_insert_reference' => \$USE_INSERT_REFERENCE,
+	    '-size_trimmed_read=i' => \$SIZE_TRIMMED_READ,
 	
 	
 	# MIRAA options    
@@ -158,6 +159,8 @@ GetOptions(
     # Concatemer options    
 	    '-min_mapping_quality=i' => \$MIN_MAPPING_QUALITY,
 	    '-no_remove_pcr_duplicates' => \$NO_REMOVE_PCR_DUP,
+	    '-consider_deletion_around_ta' => \$CONSIDER_DELETION_AROUND_TA,
+        
     # MEND options    
 	    '-excision_errors=s' => \$EXCISION_ERROR_FILE,  
 	   );
@@ -196,6 +199,7 @@ my $factory = $PACKAGE->new({
                 # Map options
                 -index_genome => $INDEX_GENOME ? 'TRUE' : 'FALSE',
                 -use_insert_reference => $USE_INSERT_REFERENCE ? 'TRUE' : 'FALSE',
+                -size_trimmed_read => $SIZE_TRIMMED_READ,
 
                 -min_match_length => $MIN_MATCH_LENGTH,
                 -max_mismatch => $MAX_MISMATCH,
@@ -258,6 +262,7 @@ my $factory = $PACKAGE->new({
                 # Concatemer options    
                 -min_mapping_quality => $MIN_MAPPING_QUALITY,
                 -no_remove_pcr_duplicates => $NO_REMOVE_PCR_DUP ? 'TRUE' : 'FALSE',
+                -consider_deletion_around_ta => $CONSIDER_DELETION_AROUND_TA ? 'TRUE' : 'FALSE',
 
                 # MEND options    
                 -excision_errors => $EXCISION_ERROR_FILE,  
