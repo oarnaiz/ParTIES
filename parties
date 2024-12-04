@@ -344,7 +344,7 @@ $factory->stderr("Waiting end of job(s) ...\n") if($VERBOSE);
 $pm->wait_all_children;  
 
 $factory->finish(\%RESULTS);
-exit 1;
+exit 0;
 
 
 #############################################
@@ -356,5 +356,5 @@ sub usage {
    foreach my $mode (sort {$MODES{$a}->{N} <=> $MODES{$b}->{N}} keys %MODES) {
       print STDERR " $mode : $MODES{$mode}->{DESC}\n";
    }
-   exit 0;
+   exit 1;
 }
