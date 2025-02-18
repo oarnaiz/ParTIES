@@ -410,8 +410,6 @@ sub significant_retention_score {
       }
    }
    close TAB;
-   print STDERR $tmp_file;
-   #unlink $tmp_file;
 
    return %significant;
 }
