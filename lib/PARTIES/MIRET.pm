@@ -316,7 +316,6 @@ sub calculate {
                 
 				$L_score=sprintf('%.4f',($L_bound_ret/($L_bound_ret+$mac))) if($L_bound_ret+$mac != 0);
 				$R_score=sprintf('%.4f',($R_bound_ret/($R_bound_ret+$mac))) if($R_bound_ret+$mac != 0);
-                print STDERR join(" ",$ies_id,$L_bound_ret,$mac,"=>",$L_score),"\n" if($ies_id eq 'MICA.94.34459');
 				$ies->{attributes}->{support_mac}[0]=$mac;
 				$ies->{attributes}->{support_left}[0]=$L_bound_ret;
 				$ies->{attributes}->{support_right}[0]=$R_bound_ret;
