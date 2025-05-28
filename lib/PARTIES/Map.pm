@@ -142,7 +142,7 @@ sub init {
      $self->stderr("bowtie2-build $self->{GENOME}\n");
      $self->{BT2_INDEX} = $self->{PATH}."/".basename($self->{GENOME});
      my ($bowtie2_build,$samtools) = (PARTIES::Config->get_program_path('bowtie2-build'),PARTIES::Config->get_program_path('samtools'));
-     system("$bowtie2_build $self->{GENOME} $self->{BT2_INDEX} > /dev/null 2>&1");   
+     system("$bowtie2_build --threads $self->{THREADS} $self->{GENOME} $self->{BT2_INDEX} > /dev/null 2>&1");   
      system("$samtools faidx $self->{GENOME}");    
      $self->stderr("Done\n" );
   } else {
