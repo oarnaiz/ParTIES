@@ -191,7 +191,7 @@ sub init {
     }
     $seqout->close;
     
-    system("$bowtie2_build $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
+    system("$bowtie2_build --threads $self->{THREADS} $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
     system("$bwa index $ies_fasta_file 2> /dev/null && $samtools faidx $ies_fasta_file");
     
     if($self->{DELETION_AROUND_TA} eq 'TRUE') {
@@ -211,7 +211,7 @@ sub init {
             
         }
     
-        system("$bowtie2_build $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
+        system("$bowtie2_build  --threads $self->{THREADS} $ies_fasta_file $ies_fasta_file > /dev/null 2>&1 && $samtools faidx $ies_fasta_file");
         system("$bwa index $ies_fasta_file 2> /dev/null && $samtools faidx $ies_fasta_file");
             
     }
