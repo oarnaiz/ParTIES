@@ -899,7 +899,7 @@ sub _align_reads {
        my $seqo = new Bio::SeqIO(-file=>">$seq_fasta_file",-format=>'fasta');
        $seqo->write_seq($seq);
        $seqo->close;
-       system("$bowtie2_build $seq_fasta_file $seq_fasta_file > /dev/null 2>&1");
+       system("$bowtie2_build --threads $self->{THREADS} $seq_fasta_file $seq_fasta_file > /dev/null 2>&1");
        system("$samtools faidx $seq_fasta_file");       
        
       
